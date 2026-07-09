@@ -1,0 +1,287 @@
+import type { Client } from "@notionhq/client";
+import type {
+  DataSourceObjectResponse,
+  PageObjectResponse,
+  RichTextItemResponse,
+} from "@notionhq/client/build/src/api-endpoints.js";
+
+import { NotionToLuaError } from "./errors.js";
+import { resolveLuauKeyFormat } from "./formatter.js";
+import {
+  NAME_PROPERTY,
+  SUPPORTED_PROPERTY_TYPES,
+  type LuauRecord,
+  type LuauValue,
+} from "./types.js";
+
+type NotionClient = Pick<
+  Client,
+  "databases" | "dataSources" | "pages" | "blocks"
+>;
+
+type PageProperty = PageObjectResponse["properties"][string];
+
+function richTextToPlainText(items: RichTextItemResponse[]): string {
+  return items.map((item) => item.plain_text).join("");
+}
+
+function isPageObject(
+  page: PageObjectResponse | { object: string },
+): page is PageObjectResponse {
+  return page.object === "page" && "properties" in page;
+}
+
+function isDataSourceWithProperties(
+  dataSource: DataSourceObjectResponse | { object: string },
+): dataSource is DataSourceObjectResponse {
+  return dataSource.object === "data_source" && "properties" in dataSource;
+}
+
+function getDataSourceTitle(dataSource: DataSourceObjectResponse): string {
+  return (
+    dataSource.title.map((item) => item.plain_text).join("") || dataSource.id
+  );
+}
+
+async function retrieveDataSourceById(
+  notion: NotionClient,
+  dataSourceId: string,
+): Promise<DataSourceObjectResponse> {
+  const dataSource = await notion.dataSources.retrieve({
+    data_source_id: dataSourceId,
+  });
+
+  if (!isDataSourceWithProperties(dataSource)) {
+    throw new NotionToLuaError(
+      "データソースのスキーマを取得できませんでした。",
+    );
+  }
+
+  return dataSource;
+}
+
+export async function resolveDataSource(
+  notion: NotionClient,
+  databaseId: string,
+): Promise<DataSourceObjectResponse> {
+  try {
+    return await retrieveDataSourceById(notion, databaseId);
+  } catch {
+    // databaseId が data_source_id でない場合は database_id として解決する。
+  }
+
+  const database = await notion.databases.retrieve({
+    database_id: databaseId,
+  });
+
+  if (!("data_sources" in database) || database.data_sources.length === 0) {
+    throw new NotionToLuaError(
+      "データベースが見つからないか、データソースが存在しません。",
+    );
+  }
+
+  if (database.data_sources.length > 1) {
+    throw new NotionToLuaError(
+      "データベースに複数のデータソースがあります。`databaseId` には data_source_id を直接指定してください。",
+    );
+  }
+
+  return retrieveDataSourceById(notion, database.data_sources[0].id);
+}
+
+export function assertNamePropertyExists(
+  dataSource: DataSourceObjectResponse,
+): void {
+  const nameProperty = dataSource.properties[NAME_PROPERTY];
+
+  if (!nameProperty) {
+    throw new NotionToLuaError(
+      `Name列が存在しません。データベース「${getDataSourceTitle(dataSource)}」に title 型の「${NAME_PROPERTY}」プロパティを追加してください。`,
+    );
+  }
+
+  if (nameProperty.type !== "title") {
+    throw new NotionToLuaError(
+      `「${NAME_PROPERTY}」は title 型である必要があります（現在: ${nameProperty.type}）。`,
+    );
+  }
+}
+
+export async function fetchAllDatabaseRecords(
+  notion: NotionClient,
+  dataSourceId: string,
+): Promise<PageObjectResponse[]> {
+  const pages: PageObjectResponse[] = [];
+  let startCursor: string | undefined;
+
+  do {
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
+      result_type: "page",
+      start_cursor: startCursor,
+    });
+
+    for (const result of response.results) {
+      if (isPageObject(result)) {
+        pages.push(result);
+      }
+    }
+
+    startCursor = response.has_more
+      ? (response.next_cursor ?? undefined)
+      : undefined;
+  } while (startCursor);
+
+  return pages;
+}
+
+function convertDateValue(
+  date: Extract<PageProperty, { type: "date" }>["date"],
+): string | null {
+  if (!date?.start) {
+    return null;
+  }
+
+  return date.start;
+}
+
+function convertFormulaValue(
+  formula: Extract<PageProperty, { type: "formula" }>["formula"],
+): LuauValue {
+  switch (formula.type) {
+    case "string":
+      return formula.string ?? null;
+    case "number":
+      return formula.number ?? null;
+    case "boolean":
+      return formula.boolean ?? null;
+    case "date":
+      return formula.date?.start ?? null;
+    default:
+      return null;
+  }
+}
+
+export function convertPropertyValue(
+  property: PageProperty,
+): LuauValue | undefined {
+  if (!SUPPORTED_PROPERTY_TYPES.has(property.type)) {
+    return undefined;
+  }
+
+  switch (property.type) {
+    case "number":
+      return property.number ?? null;
+    case "checkbox":
+      return property.checkbox ?? null;
+    case "rich_text":
+      return richTextToPlainText(property.rich_text) || null;
+    case "select":
+      return property.select?.name ?? null;
+    case "multi_select":
+      return property.multi_select.length > 0
+        ? property.multi_select.map((option) => option.name)
+        : null;
+    case "date":
+      return convertDateValue(property.date);
+    case "url":
+      return property.url ?? null;
+    case "formula":
+      return convertFormulaValue(property.formula);
+    case "status":
+      return property.status?.name ?? null;
+    default:
+      return undefined;
+  }
+}
+
+export function extractNameKey(page: PageObjectResponse): string {
+  const nameProperty = page.properties[NAME_PROPERTY];
+
+  if (!nameProperty || nameProperty.type !== "title") {
+    throw new NotionToLuaError("Name列の読み取りに失敗しました。");
+  }
+
+  const name = richTextToPlainText(nameProperty.title).trim();
+
+  if (!name) {
+    throw new NotionToLuaError(
+      "Name列が空のレコードがあります。すべてのレコードに Name を設定してください。",
+    );
+  }
+
+  return name;
+}
+
+export function pagesToLuauRecords(
+  pages: PageObjectResponse[],
+  dataSource: DataSourceObjectResponse,
+): LuauRecord[] {
+  const exportableProperties = Object.entries(dataSource.properties)
+    .filter(([propertyName, property]) => {
+      if (propertyName === NAME_PROPERTY) {
+        return false;
+      }
+
+      return SUPPORTED_PROPERTY_TYPES.has(property.type);
+    })
+    .map(([propertyName]) => propertyName);
+
+  const seenKeys = new Map<string, number>();
+  const records: LuauRecord[] = [];
+
+  for (const page of pages) {
+    const key = extractNameKey(page);
+    const duplicateCount = (seenKeys.get(key) ?? 0) + 1;
+    seenKeys.set(key, duplicateCount);
+
+    if (duplicateCount > 1) {
+      throw new NotionToLuaError(
+        `Name列の値「${key}」が重複しています。キーは一意である必要があります。`,
+      );
+    }
+
+    const properties: Record<string, LuauValue> = {};
+
+    for (const propertyName of exportableProperties) {
+      const pageProperty = page.properties[propertyName];
+      const dataSourceProperty = dataSource.properties[propertyName];
+
+      if (!pageProperty || !dataSourceProperty) {
+        continue;
+      }
+
+      if (pageProperty.type !== dataSourceProperty.type) {
+        continue;
+      }
+
+      const converted = convertPropertyValue(pageProperty);
+
+      if (converted === undefined) {
+        continue;
+      }
+
+      properties[propertyName] = converted;
+    }
+
+    records.push({
+      key,
+      keyFormat: resolveLuauKeyFormat(key),
+      properties,
+    });
+  }
+
+  return records;
+}
+
+export function listExportablePropertyNames(
+  dataSource: DataSourceObjectResponse,
+): string[] {
+  return Object.entries(dataSource.properties)
+    .filter(
+      ([propertyName, property]) =>
+        propertyName !== NAME_PROPERTY &&
+        SUPPORTED_PROPERTY_TYPES.has(property.type),
+    )
+    .map(([propertyName]) => propertyName);
+}
