@@ -1,14 +1,18 @@
 import type { Client } from "@notionhq/client";
 import type { DataSourceObjectResponse } from "@notionhq/client/build/src/api-endpoints.js";
 
+import type { ResolvedUserConfig } from "./config.js";
 import { defaultModuleGenerator } from "./generator.js";
 import {
   assertTitlePropertyExists,
   fetchAllDatabaseRecords,
-  listExportableProperties,
   pagesToLuauRecords,
   resolveDataSource,
 } from "./notion.js";
+import {
+  createRelationResolutionContext,
+  resolveEmbeddedRelationsForRecords,
+} from "./relation.js";
 
 export type GenerateLuauNotionClient = Pick<
   Client,
@@ -19,6 +23,7 @@ export type GenerateLuauCodeOptions = {
   moduleName: string;
   dataSource?: DataSourceObjectResponse;
   exportTypes?: boolean;
+  config?: ResolvedUserConfig;
 };
 
 export type GenerateLuauCodeResult = {
@@ -32,16 +37,37 @@ export async function generateLuauCode(
   databaseId: string,
   options: GenerateLuauCodeOptions,
 ): Promise<GenerateLuauCodeResult> {
+  const config = options.config ?? {
+    format: true,
+    exportTypes: true,
+    emptyValue: "omit",
+    emptyRelation: "omit",
+  };
   const dataSource =
     options.dataSource ?? (await resolveDataSource(notion, databaseId));
   assertTitlePropertyExists(dataSource);
 
   const pages = await fetchAllDatabaseRecords(notion, dataSource.id);
   const records = pagesToLuauRecords(pages, dataSource);
+  const relationContext = createRelationResolutionContext(
+    notion,
+    config,
+    pages,
+  );
+  const properties = await resolveEmbeddedRelationsForRecords(
+    relationContext,
+    records,
+    pages,
+    dataSource,
+  );
   const luauCode = defaultModuleGenerator.generate(records, {
     moduleName: options.moduleName,
-    properties: listExportableProperties(dataSource),
-    exportTypes: options.exportTypes ?? true,
+    properties,
+    exportTypes: options.exportTypes ?? config.exportTypes,
+    outputOptions: {
+      emptyValue: config.emptyValue,
+      emptyRelation: config.emptyRelation,
+    },
   });
 
   return {

@@ -56,6 +56,8 @@ Configuration (ntn-lua.toml):
   output              Default output directory or .lua / .luau file path
   format              Run Stylua formatting (default: true)
   export_types        Emit Luau export types (default: true)
+  empty_value         How to emit null values: omit, nil, or empty_string (default: omit)
+  empty_relation      How to emit empty relations: omit or empty_table (default: omit)
 
 Priority:
   database_id   -d / --database-id → positional argument → ntn-lua.toml database_id
@@ -123,6 +125,7 @@ async function run(): Promise<number> {
       moduleName,
       dataSource,
       exportTypes: config.exportTypes,
+      config,
     });
 
     const formatted = await formatLuauCode(luauCode, { skip: !config.format });

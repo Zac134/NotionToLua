@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parse } from "smol-toml";
 
 import { NotionToLuaError } from "./errors.js";
+import type { EmptyRelationMode, EmptyValueMode } from "./types.js";
 
 export type UserConfigFile = {
   database_id?: string;
@@ -11,6 +12,8 @@ export type UserConfigFile = {
   output?: string;
   format?: boolean;
   export_types?: boolean;
+  empty_value?: EmptyValueMode;
+  empty_relation?: EmptyRelationMode;
 };
 
 export type ResolvedUserConfig = {
@@ -19,6 +22,8 @@ export type ResolvedUserConfig = {
   output?: string;
   format: boolean;
   exportTypes: boolean;
+  emptyValue: EmptyValueMode;
+  emptyRelation: EmptyRelationMode;
 };
 
 const ALLOWED_KEYS = new Set([
@@ -27,11 +32,15 @@ const ALLOWED_KEYS = new Set([
   "output",
   "format",
   "export_types",
+  "empty_value",
+  "empty_relation",
 ]);
 
 const DEFAULT_CONFIG: ResolvedUserConfig = {
   format: true,
   exportTypes: true,
+  emptyValue: "omit",
+  emptyRelation: "omit",
 };
 
 function assertNonEmptyString(value: unknown, key: string): string {
@@ -56,6 +65,29 @@ function assertBoolean(value: unknown, key: string): boolean {
   if (typeof value !== "boolean") {
     throw new NotionToLuaError(
       `Invalid type for "${key}" in ntn-lua.toml. Expected a boolean.`,
+    );
+  }
+
+  return value;
+}
+
+function assertEmptyValueMode(value: unknown, key: string): EmptyValueMode {
+  if (value !== "omit" && value !== "nil" && value !== "empty_string") {
+    throw new NotionToLuaError(
+      `Invalid value for "${key}" in ntn-lua.toml. Expected "omit", "nil", or "empty_string".`,
+    );
+  }
+
+  return value;
+}
+
+function assertEmptyRelationMode(
+  value: unknown,
+  key: string,
+): EmptyRelationMode {
+  if (value !== "omit" && value !== "empty_table") {
+    throw new NotionToLuaError(
+      `Invalid value for "${key}" in ntn-lua.toml. Expected "omit" or "empty_table".`,
     );
   }
 
@@ -99,6 +131,17 @@ function validateUserConfig(raw: unknown): UserConfigFile {
     config.export_types = assertBoolean(record.export_types, "export_types");
   }
 
+  if ("empty_value" in record) {
+    config.empty_value = assertEmptyValueMode(record.empty_value, "empty_value");
+  }
+
+  if ("empty_relation" in record) {
+    config.empty_relation = assertEmptyRelationMode(
+      record.empty_relation,
+      "empty_relation",
+    );
+  }
+
   return config;
 }
 
@@ -109,6 +152,8 @@ function resolveConfig(config: UserConfigFile): ResolvedUserConfig {
     output: config.output,
     format: config.format ?? true,
     exportTypes: config.export_types ?? true,
+    emptyValue: config.empty_value ?? "omit",
+    emptyRelation: config.empty_relation ?? "omit",
   };
 }
 
