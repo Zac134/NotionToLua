@@ -50,6 +50,10 @@ ntn-lua = "Zac134/NotionToLua@0.1.0"
 
 Then run `rokit install` from the project root. Rokit places `ntn-lua` on `PATH` for that project.
 
+### Linting (optional)
+
+`ntn-lua` formats output with StyLua but does not run selene. Conversion-time checks (duplicate title keys, missing titles, permission errors, and similar contract violations) fail immediately with a non-zero exit code. If you want additional linting in your Roblox project, install [selene](https://github.com/Kampfkarren/selene) via Rokit and run it on generated files or in CI after sync.
+
 ## Use in Roblox projects
 
 This workflow assumes a [Rojo](https://github.com/rojo-rbx/rojo) project. Run `ntn-lua` from the project root so it reads that directory's `.env` (same behavior for the Rokit binary and the npm dev CLI).

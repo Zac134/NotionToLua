@@ -36,7 +36,7 @@ function printHelp(): void {
 
 Examples:
   ntn-lua -d <id> -o ./output
-  ntn-lua -d <id> -o ./output/testModule.luau
+  ntn-lua -d <id> -o ./output/Weapons.luau
   ntn-lua                          (NOTION_DATABASE_ID / NOTION_OUTPUT_DIR in .env)
 
 Options:
