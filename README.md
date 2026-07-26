@@ -1,17 +1,17 @@
 # NotionToLua
 
 Notion データベースの全レコードを Roblox Luau の `ModuleScript` 形式へ変換する CLI です。  
-`ntn-lua sync` で、Notion ページ内のコードブロックへ反映するか、ローカルファイルとして出力できます。
+`ntn-lua` で、Notion ページ内のコードブロックへ反映するか、ローカルファイルとして出力できます。
 
 ## 機能
 
-- `ntn-lua sync` CLI（Node.js 22 `parseArgs`）
+- `ntn-lua` CLI（Node.js 22 `parseArgs`）
 - データベース全レコードの取得（ページネーション対応）
 - Notion プロパティ型 → Luau 型変換
 - ページ内の `language = lua`（UI 上の Luau 含む）コードブロックを検索して上書き、なければ末尾に新規作成
-- `--output` 指定時はファイル出力のみ（Notion 書き込みなし）
+- `--output` 指定時はファイル出力のみ（Notion 書き込みなし）。ディレクトリまたは `.lua` / `.luau` ファイルパスを指定可能
 - Stylua によるフォーマット（失敗時は警告して続行、`--no-format` でスキップ）
-- Name 列をトップレベルキーとして使用（重複・空はエラー）
+- title 型の主キー列をトップレベルキーとして使用（重複・空はエラー）
 - 未対応プロパティ型はスキップ
 
 ## 前提
@@ -42,33 +42,45 @@ npm test
 cp .env.example .env
 ```
 
-`.env` に `NOTION_API_TOKEN`（Integration の Internal Integration Secret）を設定します。
+`.env` に `NOTION_API_TOKEN`（必須）と、よく使う設定を任意で入れます。
 
-| 変数               | 必須 | 用途                                      |
-| ------------------ | ---- | ----------------------------------------- |
-| `NOTION_API_TOKEN` | 必須 | Notion Integration の API トークン        |
+| 変数                  | 必須 | 用途                                           |
+| --------------------- | ---- | ---------------------------------------------- |
+| `NOTION_API_TOKEN`    | 必須 | Notion Integration の API トークン             |
+| `NOTION_DATABASE_ID`  | 任意 | デフォルトの database_id / data_source_id      |
+| `NOTION_OUTPUT_DIR`   | 任意 | デフォルトの出力ディレクトリ（ファイル出力）   |
 
 ## 使い方
 
 開発中（ビルド不要）:
 
 ```bash
-npm run sync -- sync -d <DATABASE_OR_DATA_SOURCE_ID>
+# 最短（.env に DB ID と output dir を設定済み）
+npm run sync
+
+# 個別に上書きする場合
+npm run sync -- -o ./other
+npm run sync -- 3a94b589fd86808d9d64d7c99ce91844
 ```
 
 ビルド後:
 
 ```bash
 npm run build
-npx ntn-lua sync -d <DATABASE_OR_DATA_SOURCE_ID>
-# または
-npm start -- sync -d <DATABASE_OR_DATA_SOURCE_ID>
+npx ntn-lua
+npx ntn-lua -o ./other
 ```
+
+優先順:
+- database ID: `-d` / `--database-id` → 位置引数 → `NOTION_DATABASE_ID`
+- 出力 dir: `-o` / `--output` → `NOTION_OUTPUT_DIR`（未設定時は Notion コードブロックへ書き込み）
 
 ### Notion コードブロックへ反映（デフォルト）
 
 ```bash
-ntn-lua sync --database-id <DATABASE_OR_DATA_SOURCE_ID>
+ntn-lua -d <DATABASE_OR_DATA_SOURCE_ID>
+# または
+ntn-lua <DATABASE_OR_DATA_SOURCE_ID>
 ```
 
 書き込み先ページは次の順で解決されます。
@@ -80,13 +92,18 @@ ntn-lua sync --database-id <DATABASE_OR_DATA_SOURCE_ID>
 
 ```bash
 # ページ ID を明示指定
-ntn-lua sync -d <DATABASE_ID> -p <PAGE_ID>
+ntn-lua -d <DATABASE_ID> -p <PAGE_ID>
 ```
 
 ### ローカルファイルへ出力
 
 ```bash
-ntn-lua sync -d <DATABASE_ID> -o ./output
+# .env に NOTION_DATABASE_ID / NOTION_OUTPUT_DIR を設定済みなら引数不要
+ntn-lua
+
+# 明示指定
+ntn-lua -d <DATABASE_ID> -o ./output
+ntn-lua <DATABASE_ID> -o ./output
 ```
 
 - ファイル名はデータソース名をサニタイズした `{name}.luau`
@@ -96,12 +113,12 @@ ntn-lua sync -d <DATABASE_ID> -o ./output
 ### オプション
 
 ```bash
-ntn-lua sync --database-id <id> [--page-id <id>] [--output <dir>] [--no-format]
-ntn-lua sync -d <id> [-p <id>] [-o <dir>] [--no-format]
+ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir>] [--no-format]
 ```
 
 | オプション           | 説明                                           |
 | -------------------- | ---------------------------------------------- |
+| `<database-id>`      | 位置引数。`-d` 未指定時の DB ID                |
 | `-d, --database-id`  | 変換元の database_id または data_source_id     |
 | `-p, --page-id`      | 書き込み先ページ ID（ファイル出力時は無視）    |
 | `-o, --output`       | 出力先ディレクトリ（指定時はファイル出力のみ） |
@@ -134,10 +151,20 @@ ntn-lua sync -d <id> [-p <id>] [-o <dir>] [--no-format]
 | Sword | 25     | 1.2      |
 | Axe   | 40     | 2        |
 
-生成結果:
+生成結果（`-o ./output/Weapons.luau` の場合）:
 
 ```lua
-return {
+export type WeaponsEntry = {
+    Cooldown: number?,
+    Damage: number?,
+}
+
+export type Weapons = {
+    Axe: WeaponsEntry,
+    Sword: WeaponsEntry,
+}
+
+local Weapons: Weapons = {
     Axe = {
         Cooldown = 2,
         Damage = 40,
@@ -147,13 +174,17 @@ return {
         Damage = 25,
     },
 }
+
+return Weapons
 ```
+
+`-o` に `.lua` / `.luau` ファイルを指定した場合、そのパスとファイル名（拡張子除く）がモジュール変数名に使われます。
 
 ## エラー
 
 次の場合、分かりやすいメッセージを返します。
 
-- Name 列が存在しない / 空 / 重複
+- title 型の主キー列が存在しない / 空 / 重複
 - データベース・ページが見つからない
 - データ取得・書き込み失敗
 - 権限不足
@@ -184,4 +215,4 @@ tests/            # ユニットテスト
 
 ## ライセンス
 
-Private
+MIT License. 詳細は [LICENSE](./LICENSE) を参照してください。

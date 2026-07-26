@@ -2,6 +2,9 @@
   "name": "notion-to-lua",
   "version": "1.0.0",
   "private": true,
+  "description": "CLI to convert Notion database records into Roblox Luau ModuleScripts",
+  "license": "MIT",
+  "author": "yaSu",
   "type": "module",
   "bin": {
     "ntn-lua": "./dist/cli.js"

@@ -7,9 +7,37 @@ import { describe, it } from "node:test";
 import { NotionToLuaError } from "../src/errors.js";
 import {
   getOutputFilePath,
+  isLuauFilePath,
+  resolveOutputTarget,
   sanitizeFileName,
   writeLuauFile,
+  writeLuauToPath,
 } from "../src/file-output.js";
+
+describe("isLuauFilePath", () => {
+  it("detects lua and luau file paths", () => {
+    assert.equal(isLuauFilePath("./output/test.luau"), true);
+    assert.equal(isLuauFilePath("./output/test.lua"), true);
+    assert.equal(isLuauFilePath("./output"), false);
+  });
+});
+
+describe("resolveOutputTarget", () => {
+  it("returns file target for lua paths", () => {
+    assert.deepEqual(resolveOutputTarget("./output/Weapons.luau"), {
+      kind: "file",
+      filePath: "./output/Weapons.luau",
+      moduleName: "Weapons",
+    });
+  });
+
+  it("returns directory target for non-file paths", () => {
+    assert.deepEqual(resolveOutputTarget("./output"), {
+      kind: "directory",
+      directory: "./output",
+    });
+  });
+});
 
 describe("sanitizeFileName", () => {
   it("replaces invalid characters and whitespace", () => {
@@ -38,9 +66,9 @@ describe("writeLuauFile", () => {
   it("writes to an existing directory", () => {
     const outputDir = mkdtempSync(join(tmpdir(), "ntn-lua-"));
     try {
-      const filePath = writeLuauFile(outputDir, "Sample", "return {}");
+      const filePath = writeLuauFile(outputDir, "Sample", "local Sample = {}");
       assert.equal(filePath, join(outputDir, "Sample.luau"));
-      assert.equal(readFileSync(filePath, "utf8"), "return {}");
+      assert.equal(readFileSync(filePath, "utf8"), "local Sample = {}");
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
@@ -48,12 +76,26 @@ describe("writeLuauFile", () => {
 
   it("throws when output directory does not exist", () => {
     assert.throws(
-      () => writeLuauFile("/path/does/not/exist", "Sample", "return {}"),
+      () => writeLuauFile("/path/does/not/exist", "Sample", "local Sample = {}"),
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
         assert.match(error.message, /出力ディレクトリ/);
         return true;
       },
     );
+  });
+});
+
+describe("writeLuauToPath", () => {
+  it("writes to an explicit file path", () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "ntn-lua-"));
+    const filePath = join(outputDir, "CustomName.luau");
+    try {
+      const writtenPath = writeLuauToPath(filePath, "local CustomName = {}");
+      assert.equal(writtenPath, filePath);
+      assert.equal(readFileSync(filePath, "utf8"), "local CustomName = {}");
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
   });
 });

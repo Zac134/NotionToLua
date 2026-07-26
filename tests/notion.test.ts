@@ -8,10 +8,12 @@ import type {
 import { NotionToLuaError } from "../src/errors.js";
 import {
   convertPropertyValue,
-  extractNameKey,
+  extractTitleKey,
   pagesToLuauRecords,
+  resolveTitlePropertyName,
 } from "../src/notion.js";
-import { NAME_PROPERTY } from "../src/types.js";
+
+const DEFAULT_TITLE_PROPERTY = "Name";
 
 function createRichText(text: string) {
   return [
@@ -35,6 +37,7 @@ function createRichText(text: string) {
 function createPage(
   name: string,
   properties: PageObjectResponse["properties"] = {},
+  titleProperty = DEFAULT_TITLE_PROPERTY,
 ): PageObjectResponse {
   return {
     object: "page",
@@ -50,7 +53,7 @@ function createPage(
     in_trash: false,
     is_locked: false,
     properties: {
-      [NAME_PROPERTY]: {
+      [titleProperty]: {
         id: "title-id",
         type: "title",
         title: createRichText(name),
@@ -64,6 +67,7 @@ function createPage(
 
 function createDataSource(
   properties: DataSourceObjectResponse["properties"],
+  titleProperty = DEFAULT_TITLE_PROPERTY,
 ): DataSourceObjectResponse {
   return {
     object: "data_source",
@@ -77,9 +81,9 @@ function createDataSource(
     description: [],
     is_inline: false,
     properties: {
-      [NAME_PROPERTY]: {
+      [titleProperty]: {
         id: "title-id",
-        name: NAME_PROPERTY,
+        name: titleProperty,
         type: "title",
         title: {},
         description: null,
@@ -274,20 +278,32 @@ describe("convertPropertyValue", () => {
   });
 });
 
-describe("extractNameKey", () => {
-  it("returns trimmed Name value", () => {
+describe("resolveTitlePropertyName", () => {
+  it("returns the title property name regardless of column label", () => {
+    const dataSource = createDataSource({}, "name");
+    assert.equal(resolveTitlePropertyName(dataSource), "name");
+  });
+});
+
+describe("extractTitleKey", () => {
+  it("returns trimmed title value", () => {
     const page = createPage("  ItemA  ");
-    assert.equal(extractNameKey(page), "ItemA");
+    assert.equal(extractTitleKey(page, DEFAULT_TITLE_PROPERTY), "ItemA");
   });
 
-  it("throws when Name is empty", () => {
+  it("works with a non-Name title column", () => {
+    const page = createPage("ItemB", {}, "name");
+    assert.equal(extractTitleKey(page, "name"), "ItemB");
+  });
+
+  it("throws when title is empty", () => {
     const page = createPage("   ");
 
     assert.throws(
-      () => extractNameKey(page),
+      () => extractTitleKey(page, DEFAULT_TITLE_PROPERTY),
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
-        assert.match(error.message, /Name列が空/);
+        assert.match(error.message, /title 列/);
         return true;
       },
     );
@@ -295,29 +311,6 @@ describe("extractNameKey", () => {
 });
 
 describe("pagesToLuauRecords", () => {
-  it("throws when Name values are duplicated", () => {
-    const dataSource = createDataSource({
-      Count: {
-        id: "count",
-        name: "Count",
-        type: "number",
-        number: { format: "number" },
-        description: null,
-      },
-    });
-    const pages = [createPage("Duplicate"), createPage("Duplicate")];
-
-    assert.throws(
-      () => pagesToLuauRecords(pages, dataSource),
-      (error: unknown) => {
-        assert.ok(error instanceof NotionToLuaError);
-        assert.match(error.message, /重複/);
-        assert.match(error.message, /Duplicate/);
-        return true;
-      },
-    );
-  });
-
   it("converts supported properties and skips unsupported ones", () => {
     const dataSource = createDataSource({
       Count: {
@@ -368,5 +361,58 @@ describe("pagesToLuauRecords", () => {
       Count: 3,
       Enabled: true,
     });
+  });
+
+  it("throws when title values are duplicated", () => {
+    const dataSource = createDataSource({
+      Count: {
+        id: "count",
+        name: "Count",
+        type: "number",
+        number: { format: "number" },
+        description: null,
+      },
+    });
+    const pages = [createPage("Duplicate"), createPage("Duplicate")];
+
+    assert.throws(
+      () => pagesToLuauRecords(pages, dataSource),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(error.message, /重複/);
+        assert.match(error.message, /Duplicate/);
+        return true;
+      },
+    );
+  });
+
+  it("converts records when title column is not named Name", () => {
+    const dataSource = createDataSource(
+      {
+        数値: {
+          id: "num",
+          name: "数値",
+          type: "number",
+          number: { format: "number" },
+          description: null,
+        },
+      },
+      "name",
+    );
+    const pages = [
+      createPage(
+        "ItemC",
+        {
+          数値: { id: "num", type: "number", number: 5 },
+        },
+        "name",
+      ),
+    ];
+
+    const records = pagesToLuauRecords(pages, dataSource);
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.key, "ItemC");
+    assert.deepEqual(records[0]?.properties, { 数値: 5 });
   });
 });

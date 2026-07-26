@@ -4,11 +4,16 @@ import { Client } from "@notionhq/client";
 import { parseArgs } from "node:util";
 
 import { createCodeBlockUpdater } from "./blocks.js";
-import { loadEnvFile, requireNotionToken } from "./env.js";
+import { loadEnvFile, requireNotionToken, resolveDatabaseId, resolveOutputDir } from "./env.js";
 import { toUserErrorMessage } from "./errors.js";
-import { writeLuauFile } from "./file-output.js";
+import {
+  resolveOutputTarget,
+  writeLuauFile,
+  writeLuauToPath,
+} from "./file-output.js";
 import { generateLuauCode } from "./generate.js";
-import { getDataSourceTitle } from "./notion.js";
+import { resolveModuleName } from "./module-name.js";
+import { getDataSourceTitle, resolveDataSource } from "./notion.js";
 import { resolvePageId } from "./resolve-page.js";
 import { formatLuauCode } from "./stylua.js";
 
@@ -27,58 +32,77 @@ const { values, positionals } = parseArgs({
 
 function printHelp(): void {
   console.log(`Usage:
-  ntn-lua sync --database-id <id> [--page-id <id>] [--output <dir>] [--no-format]
-  ntn-lua sync -d <id> [-p <id>] [-o <dir>] [--no-format]
+  ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>] [--no-format]
+
+Examples:
+  ntn-lua -d <id> -o ./output
+  ntn-lua -d <id> -o ./output/testModule.luau
+  ntn-lua                          (NOTION_DATABASE_ID / NOTION_OUTPUT_DIR in .env)
 
 Options:
   -d, --database-id   変換元の database_id または data_source_id
-  -p, --page-id       Luau コードを書き込む Notion ページ ID（--output 指定時は無視）
-  -o, --output        出力先ディレクトリ（指定時はファイル出力のみ）
+  -p, --page-id       Luau コードを書き込む Notion ページ ID（ファイル出力時は無視）
+  -o, --output        出力先ディレクトリまたは .lua / .luau ファイルパス
       --no-format     Stylua によるフォーマットをスキップ
-  -h, --help          ヘルプを表示`);
+  -h, --help          ヘルプを表示
+
+Environment:
+  NOTION_API_TOKEN     必須。Notion Integration の API トークン
+  NOTION_DATABASE_ID   任意。-d / 位置引数未指定時のデフォルト DB ID
+  NOTION_OUTPUT_DIR    任意。-o 未指定時のデフォルト出力先（ディレクトリまたはファイル）`);
 }
 
 function writeWarning(message: string): void {
   process.stderr.write(`警告: ${message}\n`);
 }
 
-async function runSync(): Promise<number> {
+async function run(): Promise<number> {
   if (values.help) {
     printHelp();
     return 0;
   }
 
-  const command = positionals[0];
-
-  if (command !== "sync") {
-    printHelp();
-    return command ? 1 : 0;
-  }
-
-  const databaseId = values["database-id"]?.trim();
+  const databaseId = resolveDatabaseId({
+    flag: values["database-id"],
+    positional: positionals[0],
+  });
 
   if (!databaseId) {
-    writeWarning("--database-id は必須です。");
+    writeWarning(
+      "database ID が指定されていません。-d、位置引数、または NOTION_DATABASE_ID を設定してください。",
+    );
     printHelp();
     return 1;
   }
 
   const pageId = values["page-id"]?.trim();
-  const outputDir = values.output?.trim();
+  const outputPath = resolveOutputDir({ flag: values.output });
   const noFormat = values["no-format"] ?? false;
 
-  if (outputDir && pageId) {
+  if (outputPath && pageId) {
     writeWarning(
-      "--output 指定時は --page-id は無視されます（Notion への書き込みは行いません）。",
+      "ファイル出力時は --page-id は無視されます（Notion への書き込みは行いません）。",
     );
   }
 
   try {
     const notion = new Client({ auth: requireNotionToken() });
-    const { luauCode, recordCount, dataSource } = await generateLuauCode(
-      notion,
-      databaseId,
-    );
+    const dataSource = await resolveDataSource(notion, databaseId);
+    const title = getDataSourceTitle(dataSource);
+    const outputTarget = outputPath
+      ? resolveOutputTarget(outputPath, {
+          defaultTitle: title,
+          fallbackId: dataSource.id,
+        })
+      : null;
+    const moduleName =
+      outputTarget?.kind === "file"
+        ? outputTarget.moduleName
+        : resolveModuleName(title, dataSource.id);
+
+    const { luauCode, recordCount } = await generateLuauCode(notion, databaseId, {
+      moduleName,
+    });
 
     const formatted = await formatLuauCode(luauCode, { skip: noFormat });
 
@@ -88,14 +112,16 @@ async function runSync(): Promise<number> {
 
     const finalCode = formatted.code;
 
-    if (outputDir) {
-      const title = getDataSourceTitle(dataSource);
-      const filePath = writeLuauFile(
-        outputDir,
-        title,
-        finalCode,
-        dataSource.id,
-      );
+    if (outputTarget) {
+      const filePath =
+        outputTarget.kind === "file"
+          ? writeLuauToPath(outputTarget.filePath, finalCode)
+          : writeLuauFile(
+              outputTarget.directory,
+              title,
+              finalCode,
+              dataSource.id,
+            );
       console.log(
         `${recordCount} 件のレコードを Luau に変換し、${filePath} に書き込みました。`,
       );
@@ -119,5 +145,5 @@ async function runSync(): Promise<number> {
   }
 }
 
-const exitCode = await runSync();
+const exitCode = await run();
 process.exit(exitCode);

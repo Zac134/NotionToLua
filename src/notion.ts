@@ -8,7 +8,6 @@ import type {
 import { NotionToLuaError } from "./errors.js";
 import { resolveLuauKeyFormat } from "./formatter.js";
 import {
-  NAME_PROPERTY,
   SUPPORTED_PROPERTY_TYPES,
   type LuauRecord,
   type LuauValue,
@@ -89,22 +88,32 @@ export async function resolveDataSource(
   return retrieveDataSourceById(notion, database.data_sources[0].id);
 }
 
-export function assertNamePropertyExists(
+export function resolveTitlePropertyName(
   dataSource: DataSourceObjectResponse,
-): void {
-  const nameProperty = dataSource.properties[NAME_PROPERTY];
+): string {
+  const titleProperties = Object.entries(dataSource.properties).filter(
+    ([, property]) => property.type === "title",
+  );
 
-  if (!nameProperty) {
+  if (titleProperties.length === 0) {
     throw new NotionToLuaError(
-      `Name列が存在しません。データベース「${getDataSourceTitle(dataSource)}」に title 型の「${NAME_PROPERTY}」プロパティを追加してください。`,
+      `title 型のプロパティがありません。データベース「${getDataSourceTitle(dataSource)}」に主キー列（title 型）を追加してください。`,
     );
   }
 
-  if (nameProperty.type !== "title") {
+  if (titleProperties.length > 1) {
     throw new NotionToLuaError(
-      `「${NAME_PROPERTY}」は title 型である必要があります（現在: ${nameProperty.type}）。`,
+      `title 型のプロパティが複数あります。データベース「${getDataSourceTitle(dataSource)}」の主キー列を1つにしてください。`,
     );
   }
+
+  return titleProperties[0][0];
+}
+
+export function assertTitlePropertyExists(
+  dataSource: DataSourceObjectResponse,
+): string {
+  return resolveTitlePropertyName(dataSource);
 }
 
 export async function fetchAllDatabaseRecords(
@@ -195,31 +204,37 @@ export function convertPropertyValue(
   }
 }
 
-export function extractNameKey(page: PageObjectResponse): string {
-  const nameProperty = page.properties[NAME_PROPERTY];
+export function extractTitleKey(
+  page: PageObjectResponse,
+  titlePropertyName: string,
+): string {
+  const titleProperty = page.properties[titlePropertyName];
 
-  if (!nameProperty || nameProperty.type !== "title") {
-    throw new NotionToLuaError("Name列の読み取りに失敗しました。");
-  }
-
-  const name = richTextToPlainText(nameProperty.title).trim();
-
-  if (!name) {
+  if (!titleProperty || titleProperty.type !== "title") {
     throw new NotionToLuaError(
-      "Name列が空のレコードがあります。すべてのレコードに Name を設定してください。",
+      `title 列「${titlePropertyName}」の読み取りに失敗しました。`,
     );
   }
 
-  return name;
+  const title = richTextToPlainText(titleProperty.title).trim();
+
+  if (!title) {
+    throw new NotionToLuaError(
+      `title 列「${titlePropertyName}」が空のレコードがあります。すべてのレコードに値を設定してください。`,
+    );
+  }
+
+  return title;
 }
 
 export function pagesToLuauRecords(
   pages: PageObjectResponse[],
   dataSource: DataSourceObjectResponse,
 ): LuauRecord[] {
+  const titlePropertyName = resolveTitlePropertyName(dataSource);
   const exportableProperties = Object.entries(dataSource.properties)
     .filter(([propertyName, property]) => {
-      if (propertyName === NAME_PROPERTY) {
+      if (propertyName === titlePropertyName) {
         return false;
       }
 
@@ -231,13 +246,13 @@ export function pagesToLuauRecords(
   const records: LuauRecord[] = [];
 
   for (const page of pages) {
-    const key = extractNameKey(page);
+    const key = extractTitleKey(page, titlePropertyName);
     const duplicateCount = (seenKeys.get(key) ?? 0) + 1;
     seenKeys.set(key, duplicateCount);
 
     if (duplicateCount > 1) {
       throw new NotionToLuaError(
-        `Name列の値「${key}」が重複しています。キーは一意である必要があります。`,
+        `title 列の値「${key}」が重複しています。キーは一意である必要があります。`,
       );
     }
 
@@ -277,11 +292,22 @@ export function pagesToLuauRecords(
 export function listExportablePropertyNames(
   dataSource: DataSourceObjectResponse,
 ): string[] {
+  return listExportableProperties(dataSource).map((property) => property.name);
+}
+
+export function listExportableProperties(
+  dataSource: DataSourceObjectResponse,
+): Array<{ name: string; notionType: string }> {
+  const titlePropertyName = resolveTitlePropertyName(dataSource);
+
   return Object.entries(dataSource.properties)
     .filter(
       ([propertyName, property]) =>
-        propertyName !== NAME_PROPERTY &&
+        propertyName !== titlePropertyName &&
         SUPPORTED_PROPERTY_TYPES.has(property.type),
     )
-    .map(([propertyName]) => propertyName);
+    .map(([propertyName, property]) => ({
+      name: propertyName,
+      notionType: property.type,
+    }));
 }

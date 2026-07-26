@@ -3,8 +3,9 @@ import type { DataSourceObjectResponse } from "@notionhq/client/build/src/api-en
 
 import { defaultModuleGenerator } from "./generator.js";
 import {
-  assertNamePropertyExists,
+  assertTitlePropertyExists,
   fetchAllDatabaseRecords,
+  listExportableProperties,
   pagesToLuauRecords,
   resolveDataSource,
 } from "./notion.js";
@@ -13,6 +14,10 @@ export type GenerateLuauNotionClient = Pick<
   Client,
   "databases" | "dataSources" | "pages" | "blocks"
 >;
+
+export type GenerateLuauCodeOptions = {
+  moduleName: string;
+};
 
 export type GenerateLuauCodeResult = {
   luauCode: string;
@@ -23,13 +28,17 @@ export type GenerateLuauCodeResult = {
 export async function generateLuauCode(
   notion: GenerateLuauNotionClient,
   databaseId: string,
+  options: GenerateLuauCodeOptions,
 ): Promise<GenerateLuauCodeResult> {
   const dataSource = await resolveDataSource(notion, databaseId);
-  assertNamePropertyExists(dataSource);
+  assertTitlePropertyExists(dataSource);
 
   const pages = await fetchAllDatabaseRecords(notion, dataSource.id);
   const records = pagesToLuauRecords(pages, dataSource);
-  const luauCode = defaultModuleGenerator.generate(records);
+  const luauCode = defaultModuleGenerator.generate(records, {
+    moduleName: options.moduleName,
+    properties: listExportableProperties(dataSource),
+  });
 
   return {
     luauCode,

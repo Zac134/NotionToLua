@@ -75,3 +75,41 @@ export function requireNotionToken(): string {
 
   return token;
 }
+
+export function resolveDatabaseId(options?: {
+  flag?: string;
+  positional?: string;
+}): string | undefined {
+  const fromFlag = options?.flag?.trim();
+  if (fromFlag) {
+    return fromFlag;
+  }
+
+  const fromPositional = options?.positional?.trim();
+  if (fromPositional) {
+    return fromPositional;
+  }
+
+  const fromEnv = process.env.NOTION_DATABASE_ID?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  return undefined;
+}
+
+export function resolveOutputDir(options?: {
+  flag?: string;
+}): string | undefined {
+  const fromFlag = options?.flag?.trim();
+  if (fromFlag) {
+    return fromFlag;
+  }
+
+  const fromEnv = process.env.NOTION_OUTPUT_DIR?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  return undefined;
+}

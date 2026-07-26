@@ -10,6 +10,16 @@ export interface LuauRecord {
   properties: Record<string, LuauValue>;
 }
 
+export type ExportableProperty = {
+  name: string;
+  notionType: string;
+};
+
+export interface GenerateModuleOptions {
+  moduleName: string;
+  properties: ExportableProperty[];
+}
+
 export const SUPPORTED_PROPERTY_TYPES = new Set([
   "number",
   "checkbox",
@@ -21,5 +31,3 @@ export const SUPPORTED_PROPERTY_TYPES = new Set([
   "formula",
   "status",
 ]);
-
-export const NAME_PROPERTY = "Name";
