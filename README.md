@@ -16,11 +16,92 @@ Use `ntn-lua` to write the result into a Notion page code block or to a local fi
 
 ## Requirements
 
-- Node.js 22+
-- [Stylua](https://github.com/JohnnyMorganz/StyLua) (optional; warns and outputs unformatted code if missing)
+### End users (Rokit)
+
+- [Rokit](https://github.com/rojo-rbx/rokit)
+- [StyLua](https://github.com/JohnnyMorganz/StyLua) (`ntn-lua` spawns `stylua`; install both via Rokit)
+- Notion integration token (`NOTION_API_TOKEN`)
 - Target pages and databases shared with your Notion integration
 
-## Setup
+### Developers
+
+- Node.js 22+
+- npm 10.9.2+
+- [StyLua](https://github.com/JohnnyMorganz/StyLua) (optional during development; warns and outputs unformatted code if missing)
+
+## Install with Rokit
+
+For Roblox projects, install `ntn-lua` and StyLua together with Rokit. StyLua is required because `ntn-lua` runs `stylua` on generated Luau.
+
+```bash
+rokit add Zac134/NotionToLua ntn-lua
+rokit add JohnnyMorganz/StyLua
+```
+
+The second argument (`ntn-lua`) is the command name on `PATH`. Without it, Rokit would expose the tool as `NotionToLua`.
+
+Or add both to your project's `rokit.toml`:
+
+```toml
+[tools]
+StyLua = "JohnnyMorganz/StyLua@2.5.2"
+ntn-lua = "Zac134/NotionToLua@1.0.0"
+```
+
+Then run `rokit install` from the project root. Rokit places `ntn-lua` on `PATH` for that project.
+
+## Use in Roblox projects
+
+This workflow assumes a [Rojo](https://github.com/rojo-rbx/rojo) project. Run `ntn-lua` from the project root so it reads that directory's `.env` (same behavior for the Rokit binary and the npm dev CLI).
+
+Example layout:
+
+```
+my-game/
+  .env
+  rokit.toml
+  default.project.json
+  src/
+    shared/
+      Config/
+        Weapons.luau   # generated
+```
+
+Example `default.project.json` mapping:
+
+```json
+{
+  "name": "MyGame",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "src/shared"
+      }
+    }
+  }
+}
+```
+
+Sync a Notion database into a ModuleScript file (recommended: write directly to the Rojo-mapped path):
+
+```bash
+# With NOTION_DATABASE_ID / NOTION_OUTPUT_DIR in .env
+ntn-lua
+
+# Or explicitly
+ntn-lua -d <DATABASE_ID> -o src/shared/Config/Weapons.luau
+```
+
+Require the generated module from game code:
+
+```lua
+local Weapons = require(game.ReplicatedStorage.Shared.Config.Weapons)
+
+print(Weapons.Sword.Damage)
+```
+
+## Setup (developers)
 
 ```bash
 # Install dependencies
@@ -42,7 +123,8 @@ npm test
 cp .env.example .env
 ```
 
-Set `NOTION_API_TOKEN` (required) and any defaults you use often in `.env`.
+Set `NOTION_API_TOKEN` (required) and any defaults you use often in `.env`.  
+The loader reads `process.cwd()/.env`, so run `ntn-lua` from the directory that contains your `.env` (Rokit binary and npm dev CLI behave the same).
 
 | Variable             | Required | Purpose                                                                 |
 | -------------------- | -------- | ----------------------------------------------------------------------- |
@@ -227,6 +309,54 @@ tests/              # Unit tests
 ## Extensibility
 
 The `ModuleGenerator` interface in `generator.ts` and the `CodeBlockUpdater` interface in `blocks.ts` allow future changes such as splitting ModuleScripts or swapping output targets.
+
+## Building binaries
+
+Release artifacts are standalone Bun-compiled binaries packaged as Rokit-compatible zip files. This is for maintainers only; end users install via Rokit (see [Install with Rokit](#install-with-rokit)).
+
+Prerequisites:
+
+- [Bun](https://bun.sh) on `PATH`
+- `zip` or Python 3 (used by the packaging script)
+
+Local compile (smoke test on your machine):
+
+```bash
+npm run compile -- 1.0.0 bun-darwin-arm64 ./release
+```
+
+Arguments: `<version> <bun-target> <output-dir>`. Supported `bun-target` values:
+
+| `bun-target`        | Zip suffix        |
+| ------------------- | ----------------- |
+| `bun-linux-x64`     | `linux-x86_64`    |
+| `bun-linux-arm64`   | `linux-aarch64`   |
+| `bun-darwin-x64`    | `macos-x86_64`    |
+| `bun-darwin-arm64`  | `macos-aarch64`   |
+| `bun-windows-x64`   | `windows-x86_64`  |
+| `bun-windows-arm64` | `windows-aarch64` |
+
+Output: `ntn-lua-<version>-<os>-<arch>.zip` containing a single `ntn-lua` (or `ntn-lua.exe` on Windows) binary.
+
+## Release checklist
+
+1. Confirm tests pass locally: `npm test`
+2. Tag the release and push:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+3. GitHub Actions (`.github/workflows/release.yml`) runs on the tag:
+   - `npm run check` and `npm test` on Ubuntu
+   - Bun compile + zip for all six targets above
+   - GitHub Release with the six zip assets attached
+4. Verify end-user install from a clean Roblox project:
+   ```bash
+   rokit add Zac134/NotionToLua@1.0.0 ntn-lua
+   rokit add JohnnyMorganz/StyLua
+   rokit install
+   ntn-lua --help
+   ```
 
 ## License
 
