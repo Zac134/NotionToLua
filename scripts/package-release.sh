@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Package ntn-lua as a Rokit-compatible release zip via Bun compile.
+# Package NotionToLua as a Rokit-compatible release zip via Bun compile.
+#
+# Rokit extracts a binary named after the GitHub repo (NotionToLua), then
+# exposes it on PATH under the rokit.toml alias (ntn-lua).
 #
 # Usage: scripts/package-release.sh <version> <bun-target> <output-dir>
 #
@@ -9,13 +12,16 @@
 # Requires: bun on PATH, zip (or Python 3 for fallback)
 set -euo pipefail
 
+# Must match the GitHub repository name (Zac134/NotionToLua).
+ROKIT_BIN_NAME="NotionToLua"
+
 usage() {
   echo "Usage: $0 <version> <bun-target> <output-dir>" >&2
   echo "  version     Release version (v prefix optional, e.g. 0.1.0 or v0.1.0)" >&2
   echo "  bun-target  One of: bun-linux-x64, bun-linux-arm64," >&2
   echo "              bun-darwin-x64, bun-darwin-arm64," >&2
   echo "              bun-windows-x64, bun-windows-arm64" >&2
-  echo "  output-dir  Directory for ntn-lua-{version}-{os}-{arch}.zip" >&2
+  echo "  output-dir  Directory for NotionToLua-{version}-{os}-{arch}.zip" >&2
   exit 1
 }
 
@@ -49,9 +55,9 @@ cd "$ROOT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
 if [[ "$BUN_TARGET" == bun-windows-* ]]; then
-  BIN_NAME="ntn-lua.exe"
+  BIN_NAME="${ROKIT_BIN_NAME}.exe"
 else
-  BIN_NAME="ntn-lua"
+  BIN_NAME="$ROKIT_BIN_NAME"
 fi
 
 WORK_DIR="$(mktemp -d)"
@@ -66,7 +72,7 @@ if [[ "$BIN_NAME" != *.exe ]]; then
   chmod +x "$BINARY_PATH"
 fi
 
-ZIP_NAME="ntn-lua-${VERSION}-${OS_ARCH}.zip"
+ZIP_NAME="${ROKIT_BIN_NAME}-${VERSION}-${OS_ARCH}.zip"
 ZIP_PATH="$(cd "$OUTPUT_DIR" && pwd)/$ZIP_NAME"
 
 create_zip() {

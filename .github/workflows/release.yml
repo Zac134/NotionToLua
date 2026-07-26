@@ -63,8 +63,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ntn-lua-${{ matrix.artifact_suffix }}
-          path: dist/release/ntn-lua-*-${{ matrix.artifact_suffix }}.zip
+          name: NotionToLua-${{ matrix.artifact_suffix }}
+          path: dist/release/NotionToLua-*-${{ matrix.artifact_suffix }}.zip
           if-no-files-found: error
 
   release:
