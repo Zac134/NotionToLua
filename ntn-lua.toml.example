@@ -1,0 +1,19 @@
+# Copy to ntn-lua.toml in your project root (the directory you run ntn-lua from).
+#
+# CLI flags override database_id, page_id, and output when provided.
+# format and export_types are configured here only (both default to true).
+
+# Database or data source ID (required unless passed with -d or as a positional argument)
+database_id = "your-database-or-data-source-id"
+
+# Notion page ID for code block mode (ignored when output is set)
+# page_id = "your-page-id"
+
+# Output directory or .lua / .luau file path (file mode; nothing is written to Notion)
+output = "src/shared/Config"
+
+# Run StyLua formatting after generation (default: true)
+# format = true
+
+# Emit Luau export type definitions (default: true)
+# export_types = true

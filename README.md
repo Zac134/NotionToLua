@@ -5,7 +5,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Rokit](https://img.shields.io/badge/install-Rokit-0078D4?logo=roblox)](https://github.com/rojo-rbx/rokit)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
 ---
 
@@ -28,25 +27,26 @@ flowchart LR
   end
   subgraph cli [ntn-lua]
     GEN[Generate Luau]
+    TYP[Infer export types]
     FMT[StyLua format]
   end
   subgraph roblox [Roblox / Rojo]
     MOD[ModuleScript .luau]
     GAME[game code require]
   end
-  DB --> GEN --> FMT --> MOD --> GAME
+  DB --> GEN --> TYP --> FMT --> MOD --> GAME
 ```
 
 **`ntn-lua`** fetches every record from a Notion database and converts it into a Roblox Luau `ModuleScript`. Output goes to either a **Notion page code block** or a **local `.luau` file** (recommended: a Rojo-mapped path).
 
 ---
 
-## Quick start (Rokit)
+## Quick start
 
-Install `ntn-lua` and StyLua with [Rokit](https://github.com/rojo-rbx/rokit), the toolchain manager for Roblox projects. StyLua is required because `ntn-lua` formats generated code with `stylua`.
+NotionToLua is distributed for [Rokit](https://github.com/rojo-rbx/rokit), the toolchain manager for Roblox projects. Install `ntn-lua` and StyLua together — StyLua is required because `ntn-lua` formats generated code with `stylua`.
 
 ```bash
-# From your project root
+# From your Rojo project root
 rokit add Zac134/NotionToLua ntn-lua
 rokit add JohnnyMorganz/StyLua
 rokit install
@@ -67,29 +67,65 @@ rokit install
 ntn-lua --help
 ```
 
-### Environment variables
+### Setup
 
 ```bash
 cp .env.example .env
+cp ntn-lua.toml.example ntn-lua.toml
 ```
+
+Edit `.env` with your Notion integration secret. Optionally copy and edit `ntn-lua.toml` for default database and output settings — the file is **recommended** but **not required** when you pass `-d` / `-o` on the CLI. Both files are read from `process.cwd()`, so run `ntn-lua` from the directory that contains them (typically the Rojo project root).
+
+Share target Notion pages and databases with the integration you use.
+
+#### Environment variables (`.env`)
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `NOTION_API_TOKEN` | Yes | Notion integration internal secret |
-| `NOTION_DATABASE_ID` | No | Default `database_id` or `data_source_id` |
-| `NOTION_OUTPUT_DIR` | No | Default output path for file mode (directory or `.lua` / `.luau` file) |
 
-The loader reads `process.cwd()/.env`, so run `ntn-lua` from the directory that contains your `.env` (typically the Rojo project root). Rokit binaries and the npm dev CLI behave the same.
+#### Configuration (`ntn-lua.toml`)
 
-Share target Notion pages and databases with the integration you use.
+> **Breaking changes (v0.2+):** Environment variables `NOTION_DATABASE_ID` and `NOTION_OUTPUT_DIR` were removed. Set `database_id` and `output` in `ntn-lua.toml` instead (or pass `-d` / `-o`). The `--no-format` CLI flag was removed; use `format = false` in `ntn-lua.toml`.
+
+| Key | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `database_id` | string | — | Default `database_id` or `data_source_id` |
+| `page_id` | string | — | Notion page ID for code block mode |
+| `output` | string | — | Output directory or `.lua` / `.luau` file path |
+| `format` | boolean | `true` | Run StyLua formatting after generation |
+| `export_types` | boolean | `true` | Emit Luau `export type` definitions |
+
+Unknown keys are rejected. If `ntn-lua.toml` is missing, `format` and `export_types` default to `true`; other keys stay unset. You can omit the file entirely and supply `-d` and `-o` on every run.
+
+**Priority** (CLI overrides TOML):
+
+| Setting | Resolution order |
+| --- | --- |
+| `database_id` | `-d` / `--database-id` → positional argument → `ntn-lua.toml` |
+| `output` | `-o` / `--output` → `ntn-lua.toml` |
+| `page_id` | `-p` / `--page-id` → `ntn-lua.toml` |
+
+`format` and `export_types` are read from `ntn-lua.toml` only (no CLI flags).
+
+Example `ntn-lua.toml`:
+
+```toml
+database_id = "your-database-or-data-source-id"
+output = "src/shared/Config"
+# format = true
+# export_types = true
+```
+
+See [ntn-lua.toml.example](./ntn-lua.toml.example) for a commented template.
 
 ### First sync
 
 ```bash
-# No arguments when NOTION_DATABASE_ID / NOTION_OUTPUT_DIR are set in .env
+# Uses database_id and output from ntn-lua.toml
 ntn-lua
 
-# Or pass options explicitly
+# Or pass options explicitly (overrides TOML)
 ntn-lua -d <DATABASE_ID> -o src/shared/Config/Weapons.luau
 ```
 
@@ -97,11 +133,12 @@ ntn-lua -d <DATABASE_ID> -o src/shared/Config/Weapons.luau
 
 ## Use in Roblox projects
 
-This workflow assumes a [Rojo](https://github.com/rojo-rbx/rojo) project. Map generated files with `$path` and `require` them from game code.
+This workflow assumes a [Rojo](https://github.com/rojo-rbx/rojo) project managed with Rokit. Map generated files with `$path` and `require` them from game code.
 
 ```
 my-game/
   .env
+  ntn-lua.toml
   rokit.toml
   default.project.json
   src/
@@ -138,14 +175,48 @@ Run `ntn-lua` in CI or a pre-commit hook to keep Notion authoritative while Luau
 
 ---
 
+## Automatic type definitions
+
+By default (`export_types = true`), `ntn-lua` **derives Luau types from your Notion database schema** — you do not hand-write `export type` blocks alongside the data table.
+
+For each sync, the generator:
+
+1. Reads supported property columns from the Notion data source
+2. Maps each Notion property type to a Luau type (see [Type conversion](#type-conversion))
+3. Emits `{ModuleName}Entry` (one record shape) and `{ModuleName}` (record keys → entry type)
+4. Annotates the module table as `local Weapons: Weapons = { ... }`
+
+This gives you **typed `require` results** in Roblox Studio without maintaining parallel type definitions. Other modules can reuse the generated types:
+
+```lua
+local Weapons = require(game.ReplicatedStorage.Shared.Config.Weapons)
+
+type WeaponEntry = typeof(Weapons.Sword)
+
+local function getDamage(weapon: WeaponEntry): number
+    return weapon.Damage
+end
+```
+
+Optional fields are inferred automatically: if a property is missing on some records but present on others, the generated type uses `?` (for example, `Description?: string`).
+
+To emit data only (no `export type`), set in `ntn-lua.toml`:
+
+```toml
+export_types = false
+```
+
+---
+
 ## Features
 
-- **`ntn-lua` CLI** — Node.js 22 `parseArgs` (distributed as Bun-compiled binaries)
+- **`ntn-lua` CLI** — Standalone binary compiled with Bun, distributed via Rokit (end users do not install Node or Bun)
 - **Full record fetch** — Notion API pagination
-- **Type conversion** — Notion properties → Luau values with `export type`
+- **Automatic `export type`** — Notion schema → Luau types; optional fields inferred from record coverage
+- **Type conversion** — Notion properties → Luau values
 - **Notion writes** — Find and update a `language = lua` code block, or append one (Luau in the UI is supported)
 - **File output** — `--output` writes locally only (no Notion writes). Accepts a directory or `.lua` / `.luau` path
-- **StyLua formatting** — Warn and continue on failure; skip with `--no-format`
+- **StyLua formatting** — Warn and continue on failure; disable with `format = false` in `ntn-lua.toml`
 - **Title column = record key** — Duplicate or empty values are errors
 - **Unsupported properties** — Relation, Rollup, and similar types are skipped
 
@@ -157,10 +228,14 @@ Run `ntn-lua` in CI or a pre-commit hook to keep Notion authoritative while Luau
 
 ## Usage
 
+> **Note:** `ntn-lua.toml` is optional when you pass `-d` and `-o` explicitly. See [Breaking changes](#configuration-ntn-luatoml) under Configuration for migration from older env vars and flags.
+
 ### Priority
 
-- **Database ID:** `-d` / `--database-id` → positional argument → `NOTION_DATABASE_ID`
-- **Output path:** `-o` / `--output` → `NOTION_OUTPUT_DIR` (if unset, writes to a Notion code block)
+- **Database ID:** `-d` / `--database-id` → positional argument → `ntn-lua.toml` `database_id`
+- **Output path:** `-o` / `--output` → `ntn-lua.toml` `output` (if unset, writes to a Notion code block)
+- **Page ID:** `-p` / `--page-id` → `ntn-lua.toml` `page_id`
+- **Formatting / types:** `ntn-lua.toml` only (`format`, `export_types`; both default to `true`)
 
 ### Write to a Notion code block (default)
 
@@ -172,7 +247,7 @@ ntn-lua <DATABASE_OR_DATA_SOURCE_ID>
 
 Target page resolution order:
 
-1. `--page-id` (when provided)
+1. `-p` / `--page-id` or `ntn-lua.toml` `page_id` (when set)
 2. `database_parent.page_id` on the data source
 3. Walk parents from `database_parent.block_id` via `blocks.retrieve`
 4. Error when unresolvable (for example, a database directly under the workspace)
@@ -199,36 +274,37 @@ ntn-lua -d <DATABASE_ID> -o ./output/Weapons.luau
 ### Options
 
 ```bash
-ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>] [--no-format]
+ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>]
 ```
 
 | Option | Description |
 | --- | --- |
 | `<database-id>` | Positional database or data source ID when `-d` is omitted |
-| `-d, --database-id` | Source `database_id` or `data_source_id` |
-| `-p, --page-id` | Notion page ID for the code block (ignored in file output mode) |
-| `-o, --output` | Output directory or `.lua` / `.luau` file path |
-| `--no-format` | Skip Stylua formatting |
+| `-d, --database-id` | Source `database_id` or `data_source_id` (overrides `ntn-lua.toml`) |
+| `-p, --page-id` | Notion page ID for the code block (ignored in file output mode; overrides `ntn-lua.toml`) |
+| `-o, --output` | Output directory or `.lua` / `.luau` file path (overrides `ntn-lua.toml`) |
 | `-h, --help` | Show help |
+
+TOML-only settings (`format`, `export_types`) are documented in [Configuration](#configuration-ntn-luatoml).
 
 ---
 
 ## Type conversion
 
-| Notion type | Luau |
-| --- | --- |
-| Number | `number` |
-| Checkbox | `boolean` |
-| Rich Text | `string` |
-| Select | `string` |
-| Multi Select | `{ "a", "b" }` |
-| Date | ISO 8601 string |
-| URL | `string` |
-| Formula | Converted from the evaluated result type |
-| Status | `string` |
-| Empty | Omitted from output (stored as `nil`) |
+| Notion type | Luau value | Generated type |
+| --- | --- | --- |
+| Number | `number` | `number` |
+| Checkbox | `boolean` | `boolean` |
+| Rich Text | `string` | `string` |
+| Select | `string` | `string` |
+| Multi Select | `{ "a", "b" }` | `{ string }` |
+| Date | ISO 8601 string | `string` |
+| URL | `string` | `string` |
+| Formula | Converted from the evaluated result type | `string \| number \| boolean` |
+| Status | `string` | `string` |
+| Empty | Omitted from output (stored as `nil`) | — |
 
-Unsupported types (Relation, Rollup, Files, People, and others) are skipped.
+Unsupported types (Relation, Rollup, Files, People, and others) are skipped in both values and type definitions.
 
 Generated `export type` fields use `?` when a property is missing on some records but present on others. Property names and record keys that are not valid Luau identifiers use bracket notation (for example, `["my-item"]`).
 
@@ -243,7 +319,7 @@ Notion database:
 | Sword | 25 | 1.2 |
 | Axe | 40 | 2 |
 
-Generated output with `ntn-lua -o ./output/Weapons.luau`:
+Generated output with `ntn-lua -o ./output/Weapons.luau` (types included by default):
 
 ```lua
 export type WeaponsEntry = {
@@ -274,43 +350,62 @@ return Weapons
 
 ## Requirements
 
-### End users (Rokit)
-
 - [Rokit](https://github.com/rojo-rbx/rokit)
 - [StyLua](https://github.com/JohnnyMorganz/StyLua) (`ntn-lua` spawns `stylua`; install both via Rokit)
-- `NOTION_API_TOKEN`
+- `NOTION_API_TOKEN` (in `.env`)
+- `ntn-lua.toml` in the project root (recommended; see [ntn-lua.toml.example](./ntn-lua.toml.example)) — omit if you always pass `-d` / `-o`
 - Target pages and databases shared with your Notion integration
-
-### Developers
-
-- Node.js 22+
-- npm 10.9.2+
-- StyLua (optional during development; warns and outputs unformatted code if missing)
 
 ---
 
-## Development
+## Errors
+
+Clear messages are returned for cases such as:
+
+- Missing, empty, or duplicate title property values
+- Database or page not found
+- Data fetch or write failures
+- Insufficient integration permissions
+- Output directory missing or not writable
+- Multiple data sources on one database without a direct `data_source_id`
+- Unresolvable write target page (for example, workspace-root database without `--page-id`)
+
+---
+
+## License
+
+MIT License. See [LICENSE](./LICENSE) for details.
+
+---
+
+<details>
+<summary><strong>Maintainers — development &amp; release</strong></summary>
+
+### Development
+
+**Runtime for releases:** standalone binaries built with `bun build --compile`. Rokit users do not need Node or Bun installed.
+
+**Working in this repo:** [Bun](https://bun.sh) 1.3.14+ for dependency install, scripts, type checking, and tests. StyLua is optional during development (warns and outputs unformatted code if missing).
 
 ```bash
-npm install
-npm run build      # tsc
-npm run check      # type check
-npm test           # unit tests
+bun install
+bun run check      # type check (tsc --noEmit)
+bun test           # unit tests
 ```
 
-During development (no build required):
+During development:
 
 ```bash
-npm run sync
-npm run sync -- -o ./other
-npm run sync -- 3a94b589fd86808d9d64d7c99ce91844
+bun run sync
+bun run sync -- -o ./other
+bun run sync -- 3a94b589fd86808d9d64d7c99ce91844
 ```
 
-After building:
+Run the CLI directly:
 
 ```bash
-npm run build
-npx ntn-lua
+bun run start
+bun run start -- --help
 ```
 
 ### Project layout
@@ -318,6 +413,7 @@ npx ntn-lua
 ```
 src/
   cli.ts            # CLI entry
+  config.ts         # ntn-lua.toml loader
   env.ts            # .env loader
   generate.ts       # orchestration
   resolve-page.ts   # Notion write target
@@ -336,30 +432,14 @@ tests/
 
 The `ModuleGenerator` interface in `generator.ts` and the `CodeBlockUpdater` interface in `blocks.ts` allow future changes such as splitting ModuleScripts or swapping output targets.
 
----
+### Building binaries
 
-## Errors
-
-Clear messages are returned for cases such as:
-
-- Missing, empty, or duplicate title property values
-- Database or page not found
-- Data fetch or write failures
-- Insufficient integration permissions
-- Output directory missing or not writable
-- Multiple data sources on one database without a direct `data_source_id`
-- Unresolvable write target page (for example, workspace-root database without `--page-id`)
-
----
-
-## Building binaries (maintainers)
-
-Release artifacts are standalone Bun-compiled binaries packaged as Rokit-compatible zip files. End users only need Rokit (see [Quick start](#quick-start-rokit)).
+Release artifacts are standalone Bun-compiled binaries packaged as Rokit-compatible zip files. End users only need Rokit (see [Quick start](#quick-start)).
 
 Prerequisites: [Bun](https://bun.sh) on `PATH`, and `zip` or Python 3
 
 ```bash
-npm run compile -- 0.1.1 bun-darwin-arm64 ./release
+bun run compile -- 0.1.1 bun-darwin-arm64 ./release
 ```
 
 | `bun-target` | Zip suffix |
@@ -375,7 +455,7 @@ Output: `NotionToLua-<version>-<os>-<arch>.zip` containing a single `NotionToLua
 
 ### Release checklist
 
-1. Confirm tests pass: `npm test`
+1. Confirm tests pass: `bun test`
 2. Tag and push:
    ```bash
    git tag v0.1.1
@@ -390,8 +470,4 @@ Output: `NotionToLua-<version>-<os>-<arch>.zip` containing a single `NotionToLua
    ntn-lua --help
    ```
 
----
-
-## License
-
-MIT License. See [LICENSE](./LICENSE) for details.
+</details>

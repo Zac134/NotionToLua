@@ -165,15 +165,14 @@ export function generateModuleScript(
   records: LuauRecord[],
   options: GenerateModuleOptions,
 ): string {
-  const { moduleName, properties } = options;
+  const { moduleName, properties, exportTypes } = options;
   const moduleTypeName = toPascalCase(moduleName);
-  const typeDefinitions = generateTypeDefinitions(
-    moduleName,
-    properties,
-    records,
-  );
+  const typeDefinitions = exportTypes
+    ? generateTypeDefinitions(moduleName, properties, records)
+    : null;
   const tableBody = formatModuleTableBody(records);
-  const typeAnnotation = typeDefinitions ? `: ${moduleTypeName}` : "";
+  const typeAnnotation =
+    exportTypes && typeDefinitions ? `: ${moduleTypeName}` : "";
   const sections = [
     typeDefinitions,
     `local ${moduleName}${typeAnnotation} = ${tableBody}`,

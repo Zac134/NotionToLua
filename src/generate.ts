@@ -18,6 +18,7 @@ export type GenerateLuauNotionClient = Pick<
 export type GenerateLuauCodeOptions = {
   moduleName: string;
   dataSource?: DataSourceObjectResponse;
+  exportTypes?: boolean;
 };
 
 export type GenerateLuauCodeResult = {
@@ -40,6 +41,7 @@ export async function generateLuauCode(
   const luauCode = defaultModuleGenerator.generate(records, {
     moduleName: options.moduleName,
     properties: listExportableProperties(dataSource),
+    exportTypes: options.exportTypes ?? true,
   });
 
   return {
