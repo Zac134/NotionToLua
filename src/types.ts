@@ -18,6 +18,7 @@ export type ExportableProperty = {
 export interface GenerateModuleOptions {
   moduleName: string;
   properties: ExportableProperty[];
+  exportTypes: boolean;
 }
 
 export const SUPPORTED_PROPERTY_TYPES = new Set([

@@ -3,7 +3,13 @@
 import { parseArgs } from "node:util";
 
 import { createCodeBlockUpdater } from "./blocks.js";
-import { loadEnvFile, requireNotionToken, resolveDatabaseId, resolveOutputDir } from "./env.js";
+import {
+  loadUserConfig,
+  resolveDatabaseId,
+  resolveOutputPath,
+  resolvePageId as resolvePageIdFromConfig,
+} from "./config.js";
+import { loadEnvFile, requireNotionToken } from "./env.js";
 import { toUserErrorMessage } from "./errors.js";
 import {
   resolveOutputTarget,
@@ -14,7 +20,7 @@ import { generateLuauCode } from "./generate.js";
 import { resolveModuleName } from "./module-name.js";
 import { createNotionClient } from "./notion-client.js";
 import { getDataSourceTitle, resolveDataSource } from "./notion.js";
-import { resolvePageId } from "./resolve-page.js";
+import { resolvePageId as resolveNotionPageId } from "./resolve-page.js";
 import { formatLuauCode } from "./stylua.js";
 
 loadEnvFile();
@@ -25,31 +31,39 @@ const { values, positionals } = parseArgs({
     "database-id": { type: "string", short: "d" },
     "page-id": { type: "string", short: "p" },
     output: { type: "string", short: "o" },
-    "no-format": { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 });
 
 function printHelp(): void {
   console.log(`Usage:
-  ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>] [--no-format]
+  ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>]
 
 Examples:
   ntn-lua -d <id> -o ./output
   ntn-lua -d <id> -o ./output/Weapons.luau
-  ntn-lua                          (NOTION_DATABASE_ID / NOTION_OUTPUT_DIR in .env)
+  ntn-lua                          (database_id / output in ntn-lua.toml)
 
 Options:
   -d, --database-id   Source database_id or data_source_id
   -p, --page-id       Notion page ID to write the Luau code block to (ignored in file output mode)
   -o, --output        Output directory or .lua / .luau file path
-      --no-format     Skip Stylua formatting
   -h, --help          Show help
 
+Configuration (ntn-lua.toml):
+  database_id         Default database_id or data_source_id
+  page_id             Default Notion page ID for code block mode
+  output              Default output directory or .lua / .luau file path
+  format              Run Stylua formatting (default: true)
+  export_types        Emit Luau export types (default: true)
+
+Priority:
+  database_id   -d / --database-id → positional argument → ntn-lua.toml database_id
+  output        -o / --output → ntn-lua.toml output
+  page_id       -p / --page-id → ntn-lua.toml page_id
+
 Environment:
-  NOTION_API_TOKEN     Required. Notion integration internal secret
-  NOTION_DATABASE_ID   Optional. Default DB ID when -d / positional arg is omitted
-  NOTION_OUTPUT_DIR    Optional. Default output path when -o is omitted (directory or file)`);
+  NOTION_API_TOKEN    Required. Notion integration internal secret`);
 }
 
 function writeWarning(message: string): void {
@@ -62,22 +76,27 @@ async function run(): Promise<number> {
     return 0;
   }
 
+  const config = loadUserConfig();
+
   const databaseId = resolveDatabaseId({
     flag: values["database-id"],
     positional: positionals[0],
+    config,
   });
 
   if (!databaseId) {
     writeWarning(
-      "No database ID was provided. Use -d, a positional argument, or set NOTION_DATABASE_ID.",
+      "No database ID was provided. Use -d, a positional argument, or set database_id in ntn-lua.toml.",
     );
     printHelp();
     return 1;
   }
 
-  const pageId = values["page-id"]?.trim();
-  const outputPath = resolveOutputDir({ flag: values.output });
-  const noFormat = values["no-format"] ?? false;
+  const pageId = resolvePageIdFromConfig({
+    flag: values["page-id"],
+    config,
+  });
+  const outputPath = resolveOutputPath({ flag: values.output, config });
 
   if (outputPath && pageId) {
     writeWarning(
@@ -103,9 +122,10 @@ async function run(): Promise<number> {
     const { luauCode, recordCount } = await generateLuauCode(notion, databaseId, {
       moduleName,
       dataSource,
+      exportTypes: config.exportTypes,
     });
 
-    const formatted = await formatLuauCode(luauCode, { skip: noFormat });
+    const formatted = await formatLuauCode(luauCode, { skip: !config.format });
 
     if (formatted.warning) {
       writeWarning(formatted.warning);
@@ -129,7 +149,7 @@ async function run(): Promise<number> {
       return 0;
     }
 
-    const resolvedPageId = await resolvePageId(notion, dataSource, pageId);
+    const resolvedPageId = await resolveNotionPageId(notion, dataSource, pageId);
     const codeBlockUpdater = createCodeBlockUpdater(notion);
     const codeBlockAction = await codeBlockUpdater.sync(
       resolvedPageId,

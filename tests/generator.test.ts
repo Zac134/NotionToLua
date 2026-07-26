@@ -13,8 +13,9 @@ function generate(
   records: LuauRecord[],
   moduleName = "testModule",
   properties: ExportableProperty[] = sampleProperties,
+  exportTypes = true,
 ): string {
-  return generateModuleScript(records, { moduleName, properties });
+  return generateModuleScript(records, { moduleName, properties, exportTypes });
 }
 
 describe("generateModuleScript", () => {
@@ -188,6 +189,23 @@ describe("generateModuleScript", () => {
     ]);
 
     assert.match(output, /\["my-item"\] = \{/);
+  });
+
+  it("omits type definitions when exportTypes is false", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "ItemA",
+        keyFormat: "identifier",
+        properties: { count: 1 },
+      },
+    ];
+
+    const output = generate(records, "testModule", sampleProperties, false);
+
+    assert.doesNotMatch(output, /export type/);
+    assert.doesNotMatch(output, /local testModule:/);
+    assert.match(output, /local testModule = \{/);
+    assert.match(output, /return testModule/);
   });
 
   it("formats bracket property keys inside records and types", () => {
