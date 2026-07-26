@@ -45,7 +45,7 @@ Or add both to your project's `rokit.toml`:
 ```toml
 [tools]
 StyLua = "JohnnyMorganz/StyLua@2.5.2"
-ntn-lua = "Zac134/NotionToLua@1.0.0"
+ntn-lua = "Zac134/NotionToLua@0.1.0"
 ```
 
 Then run `rokit install` from the project root. Rokit places `ntn-lua` on `PATH` for that project.
@@ -322,7 +322,7 @@ Prerequisites:
 Local compile (smoke test on your machine):
 
 ```bash
-npm run compile -- 1.0.0 bun-darwin-arm64 ./release
+npm run compile -- 0.1.0 bun-darwin-arm64 ./release
 ```
 
 Arguments: `<version> <bun-target> <output-dir>`. Supported `bun-target` values:
@@ -343,8 +343,8 @@ Output: `ntn-lua-<version>-<os>-<arch>.zip` containing a single `ntn-lua` (or `n
 1. Confirm tests pass locally: `npm test`
 2. Tag the release and push:
    ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag v0.1.0
+   git push origin v0.1.0
    ```
 3. GitHub Actions (`.github/workflows/release.yml`) runs on the tag:
    - `npm run check` and `npm test` on Ubuntu
@@ -352,7 +352,7 @@ Output: `ntn-lua-<version>-<os>-<arch>.zip` containing a single `ntn-lua` (or `n
    - GitHub Release with the six zip assets attached
 4. Verify end-user install from a clean Roblox project:
    ```bash
-   rokit add Zac134/NotionToLua@1.0.0 ntn-lua
+   rokit add Zac134/NotionToLua@0.1.0 ntn-lua
    rokit add JohnnyMorganz/StyLua
    rokit install
    ntn-lua --help
