@@ -148,8 +148,30 @@ describe("generateModuleScript", () => {
       { name: "skipped", notionType: "rich_text" },
     ]);
 
+    assert.match(output, /kept: string,/);
     assert.match(output, /kept = "yes",/);
     assert.doesNotMatch(output, /skipped =/);
+    assert.doesNotMatch(output, /skipped:/);
+  });
+
+  it("marks type fields optional only when missing in some records", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "ItemA",
+        keyFormat: "identifier",
+        properties: { count: 1, enabled: true },
+      },
+      {
+        key: "ItemB",
+        keyFormat: "identifier",
+        properties: { count: 2 },
+      },
+    ];
+
+    const output = generate(records);
+
+    assert.match(output, /count: number,/);
+    assert.match(output, /enabled: boolean\?,/);
   });
 
   it("uses bracket notation for invalid identifier keys", () => {
@@ -183,7 +205,7 @@ describe("generateModuleScript", () => {
       { name: "my-prop", notionType: "rich_text" },
     ]);
 
-    assert.match(output, /\["my-prop"\]: string\?,/);
+    assert.match(output, /\["my-prop"\]: string,/);
     assert.match(output, /\["my-prop"\] = "value",/);
   });
 });

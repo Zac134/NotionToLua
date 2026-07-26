@@ -1,69 +1,69 @@
 # NotionToLua
 
-Notion データベースの全レコードを Roblox Luau の `ModuleScript` 形式へ変換する CLI です。  
-`ntn-lua` で、Notion ページ内のコードブロックへ反映するか、ローカルファイルとして出力できます。
+A CLI that converts all records in a Notion database into Roblox Luau `ModuleScript` format.  
+Use `ntn-lua` to write the result into a Notion page code block or to a local file.
 
-## 機能
+## Features
 
-- `ntn-lua` CLI（Node.js 22 `parseArgs`）
-- データベース全レコードの取得（ページネーション対応）
-- Notion プロパティ型 → Luau 型変換
-- ページ内の `language = lua`（UI 上の Luau 含む）コードブロックを検索して上書き、なければ末尾に新規作成
-- `--output` 指定時はファイル出力のみ（Notion 書き込みなし）。ディレクトリまたは `.lua` / `.luau` ファイルパスを指定可能
-- Stylua によるフォーマット（失敗時は警告して続行、`--no-format` でスキップ）
-- title 型の主キー列をトップレベルキーとして使用（重複・空はエラー）
-- 未対応プロパティ型はスキップ
+- `ntn-lua` CLI (Node.js 22 `parseArgs`)
+- Fetch all database records with pagination
+- Notion property types → Luau value conversion
+- Find a `language = lua` code block on the target page (Luau in the UI is supported), update it, or append a new one at the end
+- With `--output`, write to a file only (no Notion writes). Accepts a directory or a `.lua` / `.luau` file path
+- Format with Stylua (warn and continue on failure; skip with `--no-format`)
+- Use the title property as the top-level record key (duplicate or empty values are errors)
+- Skip unsupported property types
 
-## 前提
+## Requirements
 
 - Node.js 22+
-- [Stylua](https://github.com/JohnnyMorganz/StyLua)（任意。未インストール時は警告して未フォーマットのまま出力）
-- 対象ページ・データベースが Integration に共有済み
+- [Stylua](https://github.com/JohnnyMorganz/StyLua) (optional; warns and outputs unformatted code if missing)
+- Target pages and databases shared with your Notion integration
 
-## セットアップ
+## Setup
 
 ```bash
-# 依存関係のインストール
+# Install dependencies
 npm install
 
-# ビルド
+# Build
 npm run build
 
-# 型チェック
+# Type check
 npm run check
 
-# ユニットテスト
+# Unit tests
 npm test
 ```
 
-### 環境変数
+### Environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` に `NOTION_API_TOKEN`（必須）と、よく使う設定を任意で入れます。
+Set `NOTION_API_TOKEN` (required) and any defaults you use often in `.env`.
 
-| 変数                  | 必須 | 用途                                           |
-| --------------------- | ---- | ---------------------------------------------- |
-| `NOTION_API_TOKEN`    | 必須 | Notion Integration の API トークン             |
-| `NOTION_DATABASE_ID`  | 任意 | デフォルトの database_id / data_source_id      |
-| `NOTION_OUTPUT_DIR`   | 任意 | デフォルトの出力ディレクトリ（ファイル出力）   |
+| Variable             | Required | Purpose                                                                 |
+| -------------------- | -------- | ----------------------------------------------------------------------- |
+| `NOTION_API_TOKEN`   | Yes      | Notion integration internal secret                                    |
+| `NOTION_DATABASE_ID` | No       | Default `database_id` or `data_source_id`                               |
+| `NOTION_OUTPUT_DIR`  | No       | Default output path for file mode (directory or `.lua` / `.luau` file) |
 
-## 使い方
+## Usage
 
-開発中（ビルド不要）:
+During development (no build required):
 
 ```bash
-# 最短（.env に DB ID と output dir を設定済み）
+# Shortest path (DB ID and output dir already in .env)
 npm run sync
 
-# 個別に上書きする場合
+# Override individually
 npm run sync -- -o ./other
 npm run sync -- 3a94b589fd86808d9d64d7c99ce91844
 ```
 
-ビルド後:
+After building:
 
 ```bash
 npm run build
@@ -71,92 +71,102 @@ npx ntn-lua
 npx ntn-lua -o ./other
 ```
 
-優先順:
-- database ID: `-d` / `--database-id` → 位置引数 → `NOTION_DATABASE_ID`
-- 出力 dir: `-o` / `--output` → `NOTION_OUTPUT_DIR`（未設定時は Notion コードブロックへ書き込み）
+Priority:
 
-### Notion コードブロックへ反映（デフォルト）
+- Database ID: `-d` / `--database-id` → positional argument → `NOTION_DATABASE_ID`
+- Output path: `-o` / `--output` → `NOTION_OUTPUT_DIR` (if unset, writes to a Notion code block)
+
+### Write to a Notion code block (default)
 
 ```bash
 ntn-lua -d <DATABASE_OR_DATA_SOURCE_ID>
-# または
+# or
 ntn-lua <DATABASE_OR_DATA_SOURCE_ID>
 ```
 
-書き込み先ページは次の順で解決されます。
+The target page is resolved in this order:
 
-1. `--page-id`（指定時）
-2. データソースの `database_parent.page_id`
-3. `database_parent.block_id` から `blocks.retrieve` で親を辿る
-4. ワークスペース直下など解決不能な場合はエラー
+1. `--page-id` (when provided)
+2. `database_parent.page_id` on the data source
+3. Walk parents from `database_parent.block_id` via `blocks.retrieve`
+4. Error when unresolvable (for example, a database directly under the workspace)
 
 ```bash
-# ページ ID を明示指定
+# Explicit page ID
 ntn-lua -d <DATABASE_ID> -p <PAGE_ID>
 ```
 
-### ローカルファイルへ出力
+If a database has multiple data sources, pass a `data_source_id` directly instead of a `database_id`.
+
+The tool searches recursively through page blocks for the first `lua` / `luau` code block.
+
+### Write to a local file
 
 ```bash
-# .env に NOTION_DATABASE_ID / NOTION_OUTPUT_DIR を設定済みなら引数不要
+# No arguments needed when NOTION_DATABASE_ID / NOTION_OUTPUT_DIR are set in .env
 ntn-lua
 
-# 明示指定
+# Explicit options
 ntn-lua -d <DATABASE_ID> -o ./output
 ntn-lua <DATABASE_ID> -o ./output
+ntn-lua -d <DATABASE_ID> -o ./output/Weapons.luau
 ```
 
-- ファイル名はデータソース名をサニタイズした `{name}.luau`
-- 出力ディレクトリは事前に作成しておく必要があります（自動作成しません）
-- `--output` 指定時は Notion への書き込みは行わず、`--page-id` は無視されます（警告を stderr に出力）
+- Directory output: file name is `{sanitized-data-source-title}.luau`
+- File output: the path and base name (without extension) become the module variable name
+- The output directory must already exist (it is not created automatically)
+- With `--output`, nothing is written to Notion and `--page-id` is ignored (a warning is printed to stderr)
 
-### オプション
+### Options
 
 ```bash
-ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir>] [--no-format]
+ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>] [--no-format]
 ```
 
-| オプション           | 説明                                           |
-| -------------------- | ---------------------------------------------- |
-| `<database-id>`      | 位置引数。`-d` 未指定時の DB ID                |
-| `-d, --database-id`  | 変換元の database_id または data_source_id     |
-| `-p, --page-id`      | 書き込み先ページ ID（ファイル出力時は無視）    |
-| `-o, --output`       | 出力先ディレクトリ（指定時はファイル出力のみ） |
-| `--no-format`        | Stylua フォーマットをスキップ                  |
-| `-h, --help`         | ヘルプを表示                                   |
+| Option              | Description                                                              |
+| ------------------- | ------------------------------------------------------------------------ |
+| `<database-id>`     | Positional database or data source ID when `-d` is omitted               |
+| `-d, --database-id` | Source `database_id` or `data_source_id`                                 |
+| `-p, --page-id`     | Notion page ID to write the code block to (ignored in file output mode) |
+| `-o, --output`      | Output directory or `.lua` / `.luau` file path (file output mode only)  |
+| `--no-format`       | Skip Stylua formatting                                                   |
+| `-h, --help`        | Show help                                                                |
 
-## 型変換ルール
+## Type conversion rules
 
-| Notion 型    | Luau 型                        |
-| ------------ | ------------------------------ |
-| Number       | `number`                       |
-| Checkbox     | `boolean`                      |
-| Rich Text    | `string`                       |
-| Select       | `string`                       |
-| Multi Select | `{ "a", "b" }`                 |
-| Date         | ISO 8601 文字列                |
-| URL          | `string`                       |
-| Formula      | 評価結果の型に応じて変換       |
-| Status       | `string`                       |
-| 空           | 出力から省略（内部では `nil`） |
+| Notion type  | Luau value / type annotation              |
+| ------------ | ----------------------------------------- |
+| Number       | `number`                                  |
+| Checkbox     | `boolean`                                 |
+| Rich Text    | `string`                                  |
+| Select       | `string`                                  |
+| Multi Select | `{ "a", "b" }`                            |
+| Date         | ISO 8601 string                           |
+| URL          | `string`                                  |
+| Formula      | Converted from the evaluated result type  |
+| Status       | `string`                                  |
+| Empty        | Omitted from output (stored as `nil`)     |
 
-未対応型（Relation, Rollup, Files, People など）はスキップします。
+Unsupported types (Relation, Rollup, Files, People, and others) are skipped.
 
-## 出力例
+Generated `export type` fields use `?` when a property is missing on some records but present on others.  
+Property names and record keys that are not valid Luau identifiers use bracket notation (for example, `["my-item"]`).
 
-データベース:
+## Output example
+
+Database:
 
 | Name  | Damage | Cooldown |
 | ----- | ------ | -------- |
 | Sword | 25     | 1.2      |
 | Axe   | 40     | 2        |
 
-生成結果（`-o ./output/Weapons.luau` の場合）:
+Generated output (with `-o ./output/Weapons.luau`):
 
 ```lua
 export type WeaponsEntry = {
-    Cooldown: number?,
-    Damage: number?,
+    Cooldown: number,
+    Damage: number,
 }
 
 export type Weapons = {
@@ -178,41 +188,46 @@ local Weapons: Weapons = {
 return Weapons
 ```
 
-`-o` に `.lua` / `.luau` ファイルを指定した場合、そのパスとファイル名（拡張子除く）がモジュール変数名に使われます。
+When `-o` points to a `.lua` or `.luau` file, that path and its base name (without extension) are used as the module variable name.  
+When `-o` is a directory, the module name is derived from the sanitized data source title.
 
-## エラー
+## Errors
 
-次の場合、分かりやすいメッセージを返します。
+Clear messages are returned for cases such as:
 
-- title 型の主キー列が存在しない / 空 / 重複
-- データベース・ページが見つからない
-- データ取得・書き込み失敗
-- 権限不足
-- 出力ディレクトリが存在しない
+- Missing, empty, or duplicate title property values
+- Database or page not found
+- Data fetch or write failures
+- Insufficient integration permissions
+- Output directory missing or not writable
+- Multiple data sources on one database without a direct `data_source_id`
+- Unresolvable write target page (for example, workspace-root database without `--page-id`)
 
-## プロジェクト構成
+## Project layout
 
 ```
 src/
-  cli.ts          # CLI エントリポイント
-  env.ts          # .env ローダ・トークン検証
-  generate.ts     # Luau 生成オーケストレーション
-  resolve-page.ts # 書き込み先ページ解決
-  stylua.ts       # Stylua フォーマット
-  file-output.ts  # ファイル出力
-  notion.ts       # Notion API 操作・プロパティ変換
-  generator.ts    # Luau ModuleScript 生成
-  formatter.ts    # Luau 値・キーのフォーマット
-  blocks.ts       # コードブロック検索・更新
-  types.ts        # 共有型定義
-  errors.ts       # エラーハンドリング
-tests/            # ユニットテスト
+  cli.ts            # CLI entry point
+  env.ts            # .env loader and token validation
+  generate.ts       # Luau generation orchestration
+  resolve-page.ts   # Resolve Notion write target page
+  stylua.ts         # Stylua formatting
+  file-output.ts    # File output
+  notion-client.ts  # Notion client factory
+  notion.ts         # Notion API access and property conversion
+  generator.ts      # Luau ModuleScript generation
+  formatter.ts      # Luau value and key formatting
+  module-name.ts    # Module name sanitization
+  blocks.ts         # Code block search and update
+  types.ts          # Shared types
+  errors.ts         # Error handling
+tests/              # Unit tests
 ```
 
-## 拡張性
+## Extensibility
 
-`generator.ts` の `ModuleGenerator` と `blocks.ts` の `CodeBlockUpdater` インターフェースにより、将来の ModuleScript 分割や出力先の差し替えが可能です。
+The `ModuleGenerator` interface in `generator.ts` and the `CodeBlockUpdater` interface in `blocks.ts` allow future changes such as splitting ModuleScripts or swapping output targets.
 
-## ライセンス
+## License
 
-MIT License. 詳細は [LICENSE](./LICENSE) を参照してください。
+MIT License. See [LICENSE](./LICENSE) for details.

@@ -69,7 +69,7 @@ export function requireNotionToken(): string {
 
   if (!token) {
     throw new NotionToLuaError(
-      "NOTION_API_TOKEN が設定されていません。.env または環境変数に Integration の Internal Integration Secret を設定してください。",
+      "NOTION_API_TOKEN is not set. Set the integration internal secret in .env or an environment variable.",
     );
   }
 

@@ -10,6 +10,7 @@ import {
   convertPropertyValue,
   extractTitleKey,
   pagesToLuauRecords,
+  resolveDataSource,
   resolveTitlePropertyName,
 } from "../src/notion.js";
 
@@ -303,7 +304,7 @@ describe("extractTitleKey", () => {
       () => extractTitleKey(page, DEFAULT_TITLE_PROPERTY),
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
-        assert.match(error.message, /title 列/);
+        assert.match(error.message, /Title property/);
         return true;
       },
     );
@@ -379,7 +380,7 @@ describe("pagesToLuauRecords", () => {
       () => pagesToLuauRecords(pages, dataSource),
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
-        assert.match(error.message, /重複/);
+        assert.match(error.message, /Duplicate title value/);
         assert.match(error.message, /Duplicate/);
         return true;
       },
@@ -414,5 +415,41 @@ describe("pagesToLuauRecords", () => {
     assert.equal(records.length, 1);
     assert.equal(records[0]?.key, "ItemC");
     assert.deepEqual(records[0]?.properties, { 数値: 5 });
+  });
+});
+
+describe("resolveDataSource", () => {
+  it("resolves database_id via databases.retrieve first", async () => {
+    const dataSource = createDataSource({}, "name");
+    const notion = {
+      databases: {
+        retrieve: async () => ({
+          data_sources: [{ id: dataSource.id }],
+        }),
+      },
+      dataSources: {
+        retrieve: async () => dataSource,
+      },
+    };
+
+    const resolved = await resolveDataSource(notion as never, "database-id");
+    assert.equal(resolved.id, dataSource.id);
+  });
+
+  it("falls back to data_source_id when database lookup fails", async () => {
+    const dataSource = createDataSource({}, "name");
+    const notion = {
+      databases: {
+        retrieve: async () => {
+          throw { code: "object_not_found", status: 404 };
+        },
+      },
+      dataSources: {
+        retrieve: async () => dataSource,
+      },
+    };
+
+    const resolved = await resolveDataSource(notion as never, dataSource.id);
+    assert.equal(resolved.id, dataSource.id);
   });
 });

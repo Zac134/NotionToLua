@@ -79,7 +79,7 @@ function assertWritableDirectory(directory: string): void {
     accessSync(directory, constants.W_OK);
   } catch {
     throw new NotionToLuaError(
-      `出力ディレクトリが存在しないか、書き込み権限がありません: ${directory}`,
+      `Output directory does not exist or is not writable: ${directory}`,
     );
   }
 }

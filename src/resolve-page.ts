@@ -37,12 +37,12 @@ export async function resolvePageId(
 
   if (parent.type === "workspace") {
     throw new NotionToLuaError(
-      "ワークスペース直下のデータベースには書き込み先ページがありません。--page-id を指定してください。",
+      "Databases directly under the workspace have no write target page. Specify --page-id.",
     );
   }
 
   throw new NotionToLuaError(
-    "書き込み先ページを解決できませんでした。--page-id を指定してください。",
+    "Could not resolve the write target page. Specify --page-id.",
   );
 }
 
@@ -56,7 +56,7 @@ async function resolvePageIdFromBlock(
   while (true) {
     if (visited.has(currentBlockId)) {
       throw new NotionToLuaError(
-        "書き込み先ページを解決できませんでした。ブロックの親参照が循環しています。",
+        "Could not resolve the write target page. Block parent references form a cycle.",
       );
     }
 
@@ -79,12 +79,12 @@ async function resolvePageIdFromBlock(
 
     if (parent.type === "workspace") {
       throw new NotionToLuaError(
-        "ワークスペース直下のデータベースには書き込み先ページがありません。--page-id を指定してください。",
+        "Databases directly under the workspace have no write target page. Specify --page-id.",
       );
     }
 
     throw new NotionToLuaError(
-      "書き込み先ページを解決できませんでした。--page-id を指定してください。",
+      "Could not resolve the write target page. Specify --page-id.",
     );
   }
 }

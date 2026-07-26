@@ -56,21 +56,46 @@ function formatTypePropertyKey(propertyName: string): string {
   return formatLuauKey(propertyName, keyFormat);
 }
 
+function isPropertyPresentInRecord(
+  record: LuauRecord,
+  propertyName: string,
+): boolean {
+  return (
+    propertyName in record.properties &&
+    record.properties[propertyName] !== null
+  );
+}
+
 function generateEntryType(
   entryTypeName: string,
   properties: ExportableProperty[],
+  records: LuauRecord[],
 ): string | null {
-  if (properties.length === 0) {
+  if (properties.length === 0 || records.length === 0) {
     return null;
   }
 
-  const lines = sortKeys(properties.map((property) => property.name)).map(
-    (propertyName) => {
+  const lines = sortKeys(properties.map((property) => property.name))
+    .map((propertyName) => {
       const property = properties.find((item) => item.name === propertyName);
+      const presentCount = records.filter((record) =>
+        isPropertyPresentInRecord(record, propertyName),
+      ).length;
+
+      if (presentCount === 0) {
+        return null;
+      }
+
       const luauType = notionTypeToLuauType(property?.notionType ?? "string");
-      return `${formatTypePropertyKey(propertyName)}: ${luauType}?,`;
-    },
-  );
+      const optionalSuffix = presentCount < records.length ? "?" : "";
+
+      return `${formatTypePropertyKey(propertyName)}: ${luauType}${optionalSuffix},`;
+    })
+    .filter((line): line is string => line !== null);
+
+  if (lines.length === 0) {
+    return null;
+  }
 
   return `export type ${entryTypeName} = {\n${indentBlock(lines.join("\n"))}\n}`;
 }
@@ -103,7 +128,7 @@ function generateTypeDefinitions(
 ): string | null {
   const entryTypeName = `${toPascalCase(moduleName)}Entry`;
   const moduleTypeName = toPascalCase(moduleName);
-  const entryType = generateEntryType(entryTypeName, properties);
+  const entryType = generateEntryType(entryTypeName, properties, records);
 
   if (!entryType) {
     return null;

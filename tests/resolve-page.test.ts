@@ -120,7 +120,7 @@ describe("resolvePageId", () => {
         ),
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
-        assert.match(error.message, /ワークスペース直下/);
+        assert.match(error.message, /directly under the workspace/);
         return true;
       },
     );
@@ -146,7 +146,7 @@ describe("resolvePageId", () => {
         ),
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
-        assert.match(error.message, /ワークスペース直下/);
+        assert.match(error.message, /directly under the workspace/);
         return true;
       },
     );

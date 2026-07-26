@@ -41,7 +41,7 @@ export async function formatLuauCode(
       resolve({
         code,
         formatted: false,
-        warning: `Stylua の実行に失敗しました: ${error.message}`,
+        warning: `Failed to run Stylua: ${error.message}`,
       });
     });
 
@@ -55,7 +55,7 @@ export async function formatLuauCode(
       resolve({
         code,
         formatted: false,
-        warning: `Stylua のフォーマットに失敗しました: ${detail}`,
+        warning: `Stylua formatting failed: ${detail}`,
       });
     });
 

@@ -17,6 +17,7 @@ export type GenerateLuauNotionClient = Pick<
 
 export type GenerateLuauCodeOptions = {
   moduleName: string;
+  dataSource?: DataSourceObjectResponse;
 };
 
 export type GenerateLuauCodeResult = {
@@ -30,7 +31,8 @@ export async function generateLuauCode(
   databaseId: string,
   options: GenerateLuauCodeOptions,
 ): Promise<GenerateLuauCodeResult> {
-  const dataSource = await resolveDataSource(notion, databaseId);
+  const dataSource =
+    options.dataSource ?? (await resolveDataSource(notion, databaseId));
   assertTitlePropertyExists(dataSource);
 
   const pages = await fetchAllDatabaseRecords(notion, dataSource.id);

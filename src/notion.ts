@@ -1,4 +1,5 @@
 import type { Client } from "@notionhq/client";
+import { APIResponseError } from "@notionhq/client";
 import type {
   DataSourceObjectResponse,
   PageObjectResponse,
@@ -52,40 +53,82 @@ async function retrieveDataSourceById(
 
   if (!isDataSourceWithProperties(dataSource)) {
     throw new NotionToLuaError(
-      "データソースのスキーマを取得できませんでした。",
+      "Could not retrieve the data source schema.",
     );
   }
 
   return dataSource;
 }
 
+function isObjectNotFoundError(error: unknown): boolean {
+  if (APIResponseError.isAPIResponseError(error)) {
+    return error.code === "object_not_found";
+  }
+
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "object_not_found"
+  );
+}
+
+async function resolveDataSourceViaDatabase(
+  notion: NotionClient,
+  databaseId: string,
+): Promise<DataSourceObjectResponse | null> {
+  try {
+    const database = await notion.databases.retrieve({
+      database_id: databaseId,
+    });
+
+    if (!("data_sources" in database) || database.data_sources.length === 0) {
+      throw new NotionToLuaError(
+        "Database not found or it has no data sources.",
+      );
+    }
+
+    if (database.data_sources.length > 1) {
+      throw new NotionToLuaError(
+        "This database has multiple data sources. Pass a data_source_id directly as databaseId.",
+      );
+    }
+
+    return retrieveDataSourceById(notion, database.data_sources[0].id);
+  } catch (error) {
+    if (error instanceof NotionToLuaError) {
+      throw error;
+    }
+
+    if (isObjectNotFoundError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 export async function resolveDataSource(
   notion: NotionClient,
   databaseId: string,
 ): Promise<DataSourceObjectResponse> {
+  const fromDatabase = await resolveDataSourceViaDatabase(notion, databaseId);
+
+  if (fromDatabase) {
+    return fromDatabase;
+  }
+
   try {
     return await retrieveDataSourceById(notion, databaseId);
-  } catch {
-    // databaseId が data_source_id でない場合は database_id として解決する。
+  } catch (error) {
+    if (isObjectNotFoundError(error)) {
+      throw new NotionToLuaError(
+        "Database or page not found. Check the integration connection and ID.",
+      );
+    }
+
+    throw error;
   }
-
-  const database = await notion.databases.retrieve({
-    database_id: databaseId,
-  });
-
-  if (!("data_sources" in database) || database.data_sources.length === 0) {
-    throw new NotionToLuaError(
-      "データベースが見つからないか、データソースが存在しません。",
-    );
-  }
-
-  if (database.data_sources.length > 1) {
-    throw new NotionToLuaError(
-      "データベースに複数のデータソースがあります。`databaseId` には data_source_id を直接指定してください。",
-    );
-  }
-
-  return retrieveDataSourceById(notion, database.data_sources[0].id);
 }
 
 export function resolveTitlePropertyName(
@@ -97,13 +140,13 @@ export function resolveTitlePropertyName(
 
   if (titleProperties.length === 0) {
     throw new NotionToLuaError(
-      `title 型のプロパティがありません。データベース「${getDataSourceTitle(dataSource)}」に主キー列（title 型）を追加してください。`,
+      `No title property found. Add a title property (primary key column) to database "${getDataSourceTitle(dataSource)}".`,
     );
   }
 
   if (titleProperties.length > 1) {
     throw new NotionToLuaError(
-      `title 型のプロパティが複数あります。データベース「${getDataSourceTitle(dataSource)}」の主キー列を1つにしてください。`,
+      `Multiple title properties found. Database "${getDataSourceTitle(dataSource)}" must have exactly one title property.`,
     );
   }
 
@@ -212,7 +255,7 @@ export function extractTitleKey(
 
   if (!titleProperty || titleProperty.type !== "title") {
     throw new NotionToLuaError(
-      `title 列「${titlePropertyName}」の読み取りに失敗しました。`,
+      `Failed to read title property "${titlePropertyName}".`,
     );
   }
 
@@ -220,7 +263,7 @@ export function extractTitleKey(
 
   if (!title) {
     throw new NotionToLuaError(
-      `title 列「${titlePropertyName}」が空のレコードがあります。すべてのレコードに値を設定してください。`,
+      `Title property "${titlePropertyName}" is empty on one or more records. Set a value on every record.`,
     );
   }
 
@@ -252,7 +295,7 @@ export function pagesToLuauRecords(
 
     if (duplicateCount > 1) {
       throw new NotionToLuaError(
-        `title 列の値「${key}」が重複しています。キーは一意である必要があります。`,
+        `Duplicate title value "${key}". Keys must be unique.`,
       );
     }
 

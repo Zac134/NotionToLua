@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { Client } from "@notionhq/client";
 import { parseArgs } from "node:util";
 
 import { createCodeBlockUpdater } from "./blocks.js";
@@ -13,6 +12,7 @@ import {
 } from "./file-output.js";
 import { generateLuauCode } from "./generate.js";
 import { resolveModuleName } from "./module-name.js";
+import { createNotionClient } from "./notion-client.js";
 import { getDataSourceTitle, resolveDataSource } from "./notion.js";
 import { resolvePageId } from "./resolve-page.js";
 import { formatLuauCode } from "./stylua.js";
@@ -40,20 +40,20 @@ Examples:
   ntn-lua                          (NOTION_DATABASE_ID / NOTION_OUTPUT_DIR in .env)
 
 Options:
-  -d, --database-id   変換元の database_id または data_source_id
-  -p, --page-id       Luau コードを書き込む Notion ページ ID（ファイル出力時は無視）
-  -o, --output        出力先ディレクトリまたは .lua / .luau ファイルパス
-      --no-format     Stylua によるフォーマットをスキップ
-  -h, --help          ヘルプを表示
+  -d, --database-id   Source database_id or data_source_id
+  -p, --page-id       Notion page ID to write the Luau code block to (ignored in file output mode)
+  -o, --output        Output directory or .lua / .luau file path
+      --no-format     Skip Stylua formatting
+  -h, --help          Show help
 
 Environment:
-  NOTION_API_TOKEN     必須。Notion Integration の API トークン
-  NOTION_DATABASE_ID   任意。-d / 位置引数未指定時のデフォルト DB ID
-  NOTION_OUTPUT_DIR    任意。-o 未指定時のデフォルト出力先（ディレクトリまたはファイル）`);
+  NOTION_API_TOKEN     Required. Notion integration internal secret
+  NOTION_DATABASE_ID   Optional. Default DB ID when -d / positional arg is omitted
+  NOTION_OUTPUT_DIR    Optional. Default output path when -o is omitted (directory or file)`);
 }
 
 function writeWarning(message: string): void {
-  process.stderr.write(`警告: ${message}\n`);
+  process.stderr.write(`Warning: ${message}\n`);
 }
 
 async function run(): Promise<number> {
@@ -69,7 +69,7 @@ async function run(): Promise<number> {
 
   if (!databaseId) {
     writeWarning(
-      "database ID が指定されていません。-d、位置引数、または NOTION_DATABASE_ID を設定してください。",
+      "No database ID was provided. Use -d, a positional argument, or set NOTION_DATABASE_ID.",
     );
     printHelp();
     return 1;
@@ -81,12 +81,12 @@ async function run(): Promise<number> {
 
   if (outputPath && pageId) {
     writeWarning(
-      "ファイル出力時は --page-id は無視されます（Notion への書き込みは行いません）。",
+      "--page-id is ignored in file output mode (nothing is written to Notion).",
     );
   }
 
   try {
-    const notion = new Client({ auth: requireNotionToken() });
+    const notion = createNotionClient(requireNotionToken());
     const dataSource = await resolveDataSource(notion, databaseId);
     const title = getDataSourceTitle(dataSource);
     const outputTarget = outputPath
@@ -102,6 +102,7 @@ async function run(): Promise<number> {
 
     const { luauCode, recordCount } = await generateLuauCode(notion, databaseId, {
       moduleName,
+      dataSource,
     });
 
     const formatted = await formatLuauCode(luauCode, { skip: noFormat });
@@ -123,7 +124,7 @@ async function run(): Promise<number> {
               dataSource.id,
             );
       console.log(
-        `${recordCount} 件のレコードを Luau に変換し、${filePath} に書き込みました。`,
+        `Converted ${recordCount} record(s) to Luau and wrote ${filePath}.`,
       );
       return 0;
     }
@@ -136,7 +137,7 @@ async function run(): Promise<number> {
     );
 
     console.log(
-      `${recordCount} 件のレコードを Luau に変換し、ページ ${resolvedPageId} のコードブロックを${codeBlockAction === "updated" ? "更新" : "作成"}しました。`,
+      `Converted ${recordCount} record(s) to Luau and ${codeBlockAction === "updated" ? "updated" : "created"} the code block on page ${resolvedPageId}.`,
     );
     return 0;
   } catch (error) {

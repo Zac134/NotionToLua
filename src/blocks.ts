@@ -151,7 +151,7 @@ export async function syncPageCodeBlock(
     return "created";
   } catch {
     throw new NotionToLuaError(
-      "コードブロックの作成に失敗しました。ページへの書き込み権限を確認してください。",
+      "Failed to create the code block. Check write permissions for the page.",
     );
   }
 }

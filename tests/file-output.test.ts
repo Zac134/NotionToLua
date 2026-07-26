@@ -79,7 +79,7 @@ describe("writeLuauFile", () => {
       () => writeLuauFile("/path/does/not/exist", "Sample", "local Sample = {}"),
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
-        assert.match(error.message, /出力ディレクトリ/);
+        assert.match(error.message, /output directory/i);
         return true;
       },
     );
