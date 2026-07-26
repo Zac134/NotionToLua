@@ -8,10 +8,6 @@ type NotionClient = Pick<Client, "blocks">;
 const LUA_LANGUAGES = new Set(["lua"]);
 
 type CodeBlock = Extract<BlockObjectResponse, { type: "code" }>;
-type ChildDatabaseBlock = Extract<
-  BlockObjectResponse,
-  { type: "child_database" }
->;
 
 function isCodeBlock(block: BlockObjectResponse): block is CodeBlock {
   return block.type === "code";
@@ -72,41 +68,6 @@ async function listChildBlocks(
   } while (startCursor);
 
   return blocks;
-}
-
-function isChildDatabaseBlock(
-  block: BlockObjectResponse,
-): block is ChildDatabaseBlock {
-  return block.type === "child_database";
-}
-
-async function findFirstChildDatabaseIdRecursive(
-  notion: NotionClient,
-  blockId: string,
-): Promise<string | null> {
-  const children = await listChildBlocks(notion, blockId);
-
-  for (const block of children) {
-    if (isChildDatabaseBlock(block)) {
-      return block.id;
-    }
-
-    if (block.has_children) {
-      const nested = await findFirstChildDatabaseIdRecursive(notion, block.id);
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-
-  return null;
-}
-
-export async function findFirstChildDatabaseId(
-  notion: NotionClient,
-  pageId: string,
-): Promise<string | null> {
-  return findFirstChildDatabaseIdRecursive(notion, pageId);
 }
 
 async function findLuauCodeBlockRecursive(

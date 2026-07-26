@@ -37,7 +37,7 @@ function isDataSourceWithProperties(
   return dataSource.object === "data_source" && "properties" in dataSource;
 }
 
-function getDataSourceTitle(dataSource: DataSourceObjectResponse): string {
+export function getDataSourceTitle(dataSource: DataSourceObjectResponse): string {
   return (
     dataSource.title.map((item) => item.plain_text).join("") || dataSource.id
   );

@@ -1,30 +1,33 @@
 # NotionToLua
 
-Notion Developer Platform（Notion Workers）上で動作する Luau コードジェネレーターです。  
-ページ内のカスタムツール **「Generate Luau」** から、指定したデータベースの全レコードを読み込み、Roblox Luau の `ModuleScript` 形式へ変換して同一ページのコードブロックへ反映します。
+Notion データベースの全レコードを Roblox Luau の `ModuleScript` 形式へ変換する CLI です。  
+`ntn-lua sync` で、Notion ページ内のコードブロックへ反映するか、ローカルファイルとして出力できます。
 
 ## 機能
 
-- `worker.tool("generateLuau")` としてデプロイ（Custom Agent 向け）
-- `worker.webhook("generateLuauWebhook")` としてデプロイ（オートメーション・ボタン向け）
+- `ntn-lua sync` CLI（Node.js 22 `parseArgs`）
 - データベース全レコードの取得（ページネーション対応）
 - Notion プロパティ型 → Luau 型変換
 - ページ内の `language = lua`（UI 上の Luau 含む）コードブロックを検索して上書き、なければ末尾に新規作成
+- `--output` 指定時はファイル出力のみ（Notion 書き込みなし）
+- Stylua によるフォーマット（失敗時は警告して続行、`--no-format` でスキップ）
 - Name 列をトップレベルキーとして使用（重複・空はエラー）
 - 未対応プロパティ型はスキップ
 
 ## 前提
 
 - Node.js 22+
-- Notion Business 以上（Workers 利用）
-- [Notion CLI (`ntn`)](https://developers.notion.com/) がインストール済み
-- 対象ページ・データベースが Integration / Worker に共有済み
+- [Stylua](https://github.com/JohnnyMorganz/StyLua)（任意。未インストール時は警告して未フォーマットのまま出力）
+- 対象ページ・データベースが Integration に共有済み
 
 ## セットアップ
 
 ```bash
 # 依存関係のインストール
 npm install
+
+# ビルド
+npm run build
 
 # 型チェック
 npm run check
@@ -33,113 +36,77 @@ npm run check
 npm test
 ```
 
-### ローカル実行用の環境変数
+### 環境変数
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` に `NOTION_API_TOKEN`（Integration の Internal Integration Secret）を設定します。  
-ローカルで `ntn workers exec` する際に使用されます。
+`.env` に `NOTION_API_TOKEN`（Integration の Internal Integration Secret）を設定します。
 
-Webhook 用の任意設定:
-
-| 変数                  | 用途                                                  |
-| --------------------- | ----------------------------------------------------- |
-| `WEBHOOK_SECRET`      | オートメーションの `x-webhook-secret` ヘッダーと照合  |
-| `DEFAULT_DATABASE_ID` | `databaseId` 未指定時のデフォルト DB / data_source ID |
-
-Worker シークレットとして `ntn workers secrets set` でも設定できます。
-
-## デプロイ
-
-```bash
-# Notion ワークスペースにログイン（初回のみ）
-ntn auth login
-
-# Worker をデプロイ
-ntn workers deploy
-```
-
-デプロイ後、Notion の Custom Agent 設定から **Generate Luau** ツールを有効化してください。
-
-Webhook URL の確認:
-
-```bash
-ntn workers webhooks list
-```
+| 変数               | 必須 | 用途                                      |
+| ------------------ | ---- | ----------------------------------------- |
+| `NOTION_API_TOKEN` | 必須 | Notion Integration の API トークン        |
 
 ## 使い方
 
-### 方法 A: Custom Agent ツール（既存）
-
-#### 1. Notion ページの準備
-
-1. 変換元のデータベースをページにリンク（linked database view）として配置
-2. 同一ページに `Lua` / `Luau` のコードブロックを置く（任意。なければ自動作成）
-3. データベースに **Name**（title 型）列を必ず用意
-
-### 2. ツールの実行（Custom Agent）
-
-ページのカスタムツールから **Generate Luau** を実行し、次の入力を渡します。
-
-| 入力         | 説明                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------ |
-| `pageId`     | コードを書き込むページ ID                                                            |
-| `databaseId` | 変換元の database_id または data_source_id（複数データソースがある DB は後者を指定） |
-
-### 3. ローカルでの動作確認（Custom Agent）
+開発中（ビルド不要）:
 
 ```bash
-ntn workers exec generateLuau --local \
-  -d '{"pageId":"<PAGE_ID>","databaseId":"<DATABASE_ID>"}'
+npm run sync -- sync -d <DATABASE_OR_DATA_SOURCE_ID>
 ```
 
-### 方法 B: Webhook（エージェント不要）
-
-Notion の **オートメーション** または **ページ/DB ボタン** から Worker を直接起動できます。
-
-#### 1. Webhook URL を取得
+ビルド後:
 
 ```bash
-ntn workers deploy
-ntn workers webhooks list
+npm run build
+npx ntn-lua sync -d <DATABASE_OR_DATA_SOURCE_ID>
+# または
+npm start -- sync -d <DATABASE_OR_DATA_SOURCE_ID>
 ```
 
-`generateLuauWebhook` の URL をコピーします（URL はパスワード同等 — 共有に注意）。
-
-#### 2. Notion オートメーションを設定
-
-1. 対象 DB またはページで **+ New automation** を作成
-2. トリガーを設定（例: ボタン押下、ステータス変更）
-3. アクション: **Send webhook**
-4. Webhook URL を貼り付け
-5. 必要に応じてカスタムヘッダーを追加:
-
-| ヘッダー           | 値                         | 必須                                    |
-| ------------------ | -------------------------- | --------------------------------------- |
-| `x-webhook-secret` | `WEBHOOK_SECRET` と同じ値  | 推奨（設定時）                          |
-| `x-database-id`    | 変換元 DB / data_source ID | ページ内にリンク DB が1つだけなら省略可 |
-| `x-page-id`        | 書き込み先ページ ID        | Notion が自動送信する場合は省略可       |
-
-> Notion オートメーションは **カスタム body を送れません**（ヘッダーのみ）。  
-> `pageId` は Notion から送られる ID を利用するか、`x-page-id` ヘッダーで指定してください。  
-> `databaseId` が未指定の場合、ページ内の最初のリンク DB（`child_database`）を自動検出します。
-
-#### 3. curl での手動テスト
+### Notion コードブロックへ反映（デフォルト）
 
 ```bash
-curl -X POST "<WEBHOOK_URL>" \
-  -H "Content-Type: application/json" \
-  -H "x-webhook-secret: your-random-webhook-secret" \
-  -d '{"pageId":"<PAGE_ID>","databaseId":"<DATABASE_ID>"}'
+ntn-lua sync --database-id <DATABASE_OR_DATA_SOURCE_ID>
 ```
 
-#### 4. ログ確認
+書き込み先ページは次の順で解決されます。
+
+1. `--page-id`（指定時）
+2. データソースの `database_parent.page_id`
+3. `database_parent.block_id` から `blocks.retrieve` で親を辿る
+4. ワークスペース直下など解決不能な場合はエラー
 
 ```bash
-ntn workers runs logs <run-id>
+# ページ ID を明示指定
+ntn-lua sync -d <DATABASE_ID> -p <PAGE_ID>
 ```
+
+### ローカルファイルへ出力
+
+```bash
+ntn-lua sync -d <DATABASE_ID> -o ./output
+```
+
+- ファイル名はデータソース名をサニタイズした `{name}.luau`
+- 出力ディレクトリは事前に作成しておく必要があります（自動作成しません）
+- `--output` 指定時は Notion への書き込みは行わず、`--page-id` は無視されます（警告を stderr に出力）
+
+### オプション
+
+```bash
+ntn-lua sync --database-id <id> [--page-id <id>] [--output <dir>] [--no-format]
+ntn-lua sync -d <id> [-p <id>] [-o <dir>] [--no-format]
+```
+
+| オプション           | 説明                                           |
+| -------------------- | ---------------------------------------------- |
+| `-d, --database-id`  | 変換元の database_id または data_source_id     |
+| `-p, --page-id`      | 書き込み先ページ ID（ファイル出力時は無視）    |
+| `-o, --output`       | 出力先ディレクトリ（指定時はファイル出力のみ） |
+| `--no-format`        | Stylua フォーマットをスキップ                  |
+| `-h, --help`         | ヘルプを表示                                   |
 
 ## 型変換ルール
 
@@ -190,21 +157,25 @@ return {
 - データベース・ページが見つからない
 - データ取得・書き込み失敗
 - 権限不足
+- 出力ディレクトリが存在しない
 
 ## プロジェクト構成
 
 ```
 src/
-  index.ts      # Worker エントリポイント（tool + webhook）
-  generate.ts   # 共有の Luau 生成オーケストレーション
-  webhook.ts    # Webhook 入力パース・認証
-  notion.ts     # Notion API 操作・プロパティ変換
-  generator.ts  # Luau ModuleScript 生成
-  formatter.ts  # Luau 値・キーのフォーマット
-  blocks.ts     # コードブロック検索・更新
-  types.ts      # 共有型定義
-  errors.ts     # エラーハンドリング
-tests/          # ユニットテスト
+  cli.ts          # CLI エントリポイント
+  env.ts          # .env ローダ・トークン検証
+  generate.ts     # Luau 生成オーケストレーション
+  resolve-page.ts # 書き込み先ページ解決
+  stylua.ts       # Stylua フォーマット
+  file-output.ts  # ファイル出力
+  notion.ts       # Notion API 操作・プロパティ変換
+  generator.ts    # Luau ModuleScript 生成
+  formatter.ts    # Luau 値・キーのフォーマット
+  blocks.ts       # コードブロック検索・更新
+  types.ts        # 共有型定義
+  errors.ts       # エラーハンドリング
+tests/            # ユニットテスト
 ```
 
 ## 拡張性

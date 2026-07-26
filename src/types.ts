@@ -10,29 +10,6 @@ export interface LuauRecord {
   properties: Record<string, LuauValue>;
 }
 
-export interface GenerateLuauInput {
-  pageId: string;
-  databaseId: string;
-}
-
-export interface ToolSuccessResult {
-  success: true;
-  message: string;
-  recordCount: number;
-  codeBlockAction: "updated" | "created";
-  error: null;
-}
-
-export interface ToolErrorResult {
-  success: false;
-  message: string;
-  recordCount: null;
-  codeBlockAction: null;
-  error: string;
-}
-
-export type ToolResult = ToolSuccessResult | ToolErrorResult;
-
 export const SUPPORTED_PROPERTY_TYPES = new Set([
   "number",
   "checkbox",
