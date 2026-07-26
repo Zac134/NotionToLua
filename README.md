@@ -76,7 +76,29 @@ cp ntn-lua.toml.example ntn-lua.toml
 
 Edit `.env` with your Notion integration secret. Optionally copy and edit `ntn-lua.toml` for default database and output settings — the file is **recommended** but **not required** when you pass `-d` / `-o` on the CLI. Both files are read from `process.cwd()`, so run `ntn-lua` from the directory that contains them (typically the Rojo project root).
 
-Share target Notion pages and databases with the integration you use.
+Create a Notion integration and connect your database before the first sync — expand **Notion setup** below.
+
+<a id="notion-setup"></a>
+<details>
+<summary><strong>Notion setup — create an integration and connect your database</strong></summary>
+
+1. **Create an integration** at [notion.so/my-integrations](https://www.notion.so/my-integrations). Choose **Internal** integration.
+
+2. **Copy the Internal Integration Secret** into `.env` as `NOTION_API_TOKEN`.
+
+3. **Capabilities** (integration settings → Capabilities):
+   - **Read content** — required for all modes
+   - **Update content** and **Insert content** — required only when writing to a Notion code block (default output). File output with `-o` needs **Read content** only
+
+4. **Share your database** with the integration: open the database → **⋯** → **Connections** / **Share** → **Invite** → select your integration. For code block mode, also share the page where Luau should be written.
+
+5. **Database ID**: copy from the database URL — the 32-character hex segment (hyphens optional). If the database has multiple data sources, pass a `data_source_id` directly (see [Usage](#write-to-a-notion-code-block-default)).
+
+6. **Title column**: one Title-type property becomes each record's module key. Empty or duplicate titles are errors; exactly one Title column is expected.
+
+7. **Recommended for Roblox projects**: use `-o` for local file output. Connect the database to your integration; only the **Read content** capability is required — `ntn-lua` does not write back to Notion in file mode.
+
+</details>
 
 #### Environment variables (`.env`)
 
@@ -354,7 +376,7 @@ return Weapons
 - [StyLua](https://github.com/JohnnyMorganz/StyLua) (`ntn-lua` spawns `stylua`; install both via Rokit)
 - `NOTION_API_TOKEN` (in `.env`)
 - `ntn-lua.toml` in the project root (recommended; see [ntn-lua.toml.example](./ntn-lua.toml.example)) — omit if you always pass `-d` / `-o`
-- Target pages and databases shared with your Notion integration
+- Target pages and databases shared with your Notion integration (see [Notion setup](#notion-setup))
 
 ---
 
