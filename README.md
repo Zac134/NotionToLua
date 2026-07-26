@@ -59,7 +59,7 @@ Or add both to your project's `rokit.toml`:
 ```toml
 [tools]
 StyLua = "JohnnyMorganz/StyLua@2.5.2"
-ntn-lua = "Zac134/NotionToLua@0.1.1"
+ntn-lua = "Zac134/NotionToLua@0.3.0"
 ```
 
 ```bash
@@ -108,7 +108,12 @@ Create a Notion integration and connect your database before the first sync — 
 
 #### Configuration (`ntn-lua.toml`)
 
-> **Breaking changes (v0.2+):** Environment variables `NOTION_DATABASE_ID` and `NOTION_OUTPUT_DIR` were removed. Set `database_id` and `output` in `ntn-lua.toml` instead (or pass `-d` / `-o`). The `--no-format` CLI flag was removed; use `format = false` in `ntn-lua.toml`.
+> **Breaking changes (v0.3):**
+>
+> - **Relation columns are embedded automatically** as Luau dictionaries. In v0.1.x they were skipped. Databases with Relation columns now emit nested tables. Related databases must be shared with your integration; duplicate related Titles and circular relations are errors.
+> - **Configuration moved to `ntn-lua.toml`.** Environment variables `NOTION_DATABASE_ID` and `NOTION_OUTPUT_DIR` were removed. The `--no-format` CLI flag was removed; use `format = false` in `ntn-lua.toml`.
+>
+> See [CHANGELOG.md](./CHANGELOG.md) and [Nested relations](./docs/nested-relations.md) for migration details.
 
 | Key | Type | Default | Purpose |
 | --- | --- | --- | --- |
@@ -117,8 +122,18 @@ Create a Notion integration and connect your database before the first sync — 
 | `output` | string | — | Output directory or `.lua` / `.luau` file path |
 | `format` | boolean | `true` | Run StyLua formatting after generation |
 | `export_types` | boolean | `true` | Emit Luau `export type` definitions |
+| `empty_value` | string | `"omit"` | How to emit null values: `omit`, `nil`, or `empty_string` |
+| `empty_relation` | string | `"omit"` | How to emit empty relations: `omit` or `empty_table` |
 
 Unknown keys are rejected. If `ntn-lua.toml` is missing, `format` and `export_types` default to `true`; other keys stay unset. You can omit the file entirely and supply `-d` and `-o` on every run.
+
+Relation columns are embedded automatically. See [Nested relations](./docs/nested-relations.md).
+
+#### Migration from v0.1.x
+
+1. Copy `ntn-lua.toml.example` to `ntn-lua.toml` and set `database_id` / `output` (replacing `NOTION_DATABASE_ID` / `NOTION_OUTPUT_DIR` in `.env`).
+2. If your database has **Relation columns**, expect new nested fields in generated Luau. Share related databases with your Notion integration.
+3. Optionally set `empty_value` and `empty_relation` — both default to `omit`.
 
 **Priority** (CLI overrides TOML):
 
@@ -137,6 +152,8 @@ database_id = "your-database-or-data-source-id"
 output = "src/shared/Config"
 # format = true
 # export_types = true
+# empty_value = "omit"       # omit | nil | empty_string
+# empty_relation = "omit"    # omit | empty_table
 ```
 
 See [ntn-lua.toml.example](./ntn-lua.toml.example) for a commented template.
@@ -240,7 +257,7 @@ export_types = false
 - **File output** — `--output` writes locally only (no Notion writes). Accepts a directory or `.lua` / `.luau` path
 - **StyLua formatting** — Warn and continue on failure; disable with `format = false` in `ntn-lua.toml`
 - **Title column = record key** — Duplicate or empty values are errors
-- **Unsupported properties** — Relation, Rollup, and similar types are skipped
+- **Nested dictionaries** — Relation columns embed as Luau dictionaries (`{ Fire = 10 }` or deeper `{ Fire = { Power = 10, Duration = 3 } }`) — see [Nested relations](./docs/nested-relations.md)
 
 ### Linting (optional)
 
@@ -324,9 +341,47 @@ TOML-only settings (`format`, `export_types`) are documented in [Configuration](
 | URL | `string` | `string` |
 | Formula | Converted from the evaluated result type | `string \| number \| boolean` |
 | Status | `string` | `string` |
+| Relation | Nested dictionary (scalar or table per key) | `{ [string]: T }` or `{ [string]: { ... } }` |
 | Empty | Omitted from output (stored as `nil`) | — |
 
-Unsupported types (Relation, Rollup, Files, People, and others) are skipped in both values and type definitions.
+Unsupported types (Rollup, Files, People, and others) are skipped. Relation columns are embedded automatically as Luau dictionaries.
+
+Global empty-value settings in `ntn-lua.toml`:
+
+```toml
+empty_value = "omit"       # omit | nil | empty_string
+empty_relation = "omit"    # omit | empty_table
+```
+
+See [docs/nested-relations.md](./docs/nested-relations.md) for scalar vs nested dictionary examples and empty-value behavior.
+
+### Nested dictionary example
+
+**Effects DB** (master): Title `Fire` / `Ice`, Number `Power`
+
+**Weapons DB**: Relation column `Effects` → Effects DB
+
+Generated output:
+
+```lua
+Sword = {
+    Damage = 12,
+    Effects = {
+        Fire = 10,
+        Ice = 5,
+    },
+},
+-- type: Effects: { [string]: number }?
+```
+
+When the related database has multiple columns, each key maps to a nested table:
+
+```lua
+Effects = {
+    Fire = { Power = 10, Duration = 3 },
+},
+-- type: Effects: { [string]: { Power: number?, Duration: number? } }?
+```
 
 Generated `export type` fields use `?` when a property is missing on some records but present on others. Property names and record keys that are not valid Luau identifiers use bracket notation (for example, `["my-item"]`).
 
@@ -443,12 +498,15 @@ src/
   file-output.ts    # file output
   notion-client.ts  # client factory
   notion.ts         # API & property conversion
+  relation.ts       # Relation dictionary embedding
   generator.ts      # ModuleScript generation
   formatter.ts      # value / key formatting
   module-name.ts    # name sanitization
   blocks.ts         # code block update
   types.ts          # shared types
   errors.ts         # error handling
+docs/
+  nested-relations.md
 tests/
 ```
 
@@ -461,7 +519,7 @@ Release artifacts are standalone Bun-compiled binaries packaged as Rokit-compati
 Prerequisites: [Bun](https://bun.sh) on `PATH`, and `zip` or Python 3
 
 ```bash
-bun run compile -- 0.1.1 bun-darwin-arm64 ./release
+bun run compile -- 0.3.0 bun-darwin-arm64 ./release
 ```
 
 | `bun-target` | Zip suffix |
@@ -480,13 +538,13 @@ Output: `NotionToLua-<version>-<os>-<arch>.zip` containing a single `NotionToLua
 1. Confirm tests pass: `bun test`
 2. Tag and push:
    ```bash
-   git tag v0.1.1
-   git push origin v0.1.1
+   git tag v0.3.0
+   git push origin v0.3.0
    ```
 3. GitHub Actions builds all six targets and attaches zip assets to the Release
 4. Verify from a clean Roblox project:
    ```bash
-   rokit add Zac134/NotionToLua@0.1.1 ntn-lua
+   rokit add Zac134/NotionToLua@0.3.0 ntn-lua
    rokit add JohnnyMorganz/StyLua
    rokit install
    ntn-lua --help

@@ -17,3 +17,17 @@ output = "src/shared/Config"
 
 # Emit Luau export type definitions (default: true)
 # export_types = true
+
+# How to emit null / missing values (default: omit)
+# omit          — skip the key entirely
+# nil           — include the key with value nil
+# empty_string  — include the key with "" for string-like properties only
+# empty_value = "omit"
+
+# How to emit empty Relation columns (default: omit)
+# omit         — skip the property when no related records are linked
+# empty_table  — emit an empty table, e.g. Effects = {}
+# empty_relation = "omit"
+
+# Relation columns are embedded automatically as Luau dictionaries.
+# See docs/nested-relations.md for database design examples.

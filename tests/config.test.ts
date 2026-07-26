@@ -30,6 +30,8 @@ describe("loadUserConfig", () => {
       assert.deepEqual(loadUserConfig(cwd), {
         format: true,
         exportTypes: true,
+        emptyValue: "omit",
+        emptyRelation: "omit",
       });
     });
   });
@@ -41,6 +43,8 @@ page_id = "page-456"
 output = "./out"
 format = false
 export_types = false
+empty_value = "nil"
+empty_relation = "empty_table"
 `,
       (cwd) => {
         assert.deepEqual(loadUserConfig(cwd), {
@@ -49,6 +53,8 @@ export_types = false
           output: "./out",
           format: false,
           exportTypes: false,
+          emptyValue: "nil",
+          emptyRelation: "empty_table",
         });
       },
     );
@@ -67,6 +73,49 @@ export_types = false
           return true;
         },
       );
+    });
+  });
+
+  it("throws for legacy properties table", () => {
+    withTempConfig(
+      `[properties.Effects]
+relation = "embed"
+`,
+      (cwd) => {
+        assert.throws(
+          () => loadUserConfig(cwd),
+          (error: unknown) => {
+            assert.ok(error instanceof NotionToLuaError);
+            assert.match(
+              (error as NotionToLuaError).message,
+              /Unknown key "properties"/,
+            );
+            return true;
+          },
+        );
+      },
+    );
+  });
+
+  it("throws for invalid empty_value", () => {
+    withTempConfig('empty_value = "missing"\n', (cwd) => {
+      assert.throws(
+        () => loadUserConfig(cwd),
+        (error: unknown) => {
+          assert.ok(error instanceof NotionToLuaError);
+          assert.match(
+            (error as NotionToLuaError).message,
+            /Expected "omit", "nil", or "empty_string"/,
+          );
+          return true;
+        },
+      );
+    });
+  });
+
+  it("accepts empty_string empty_value", () => {
+    withTempConfig('empty_value = "empty_string"\n', (cwd) => {
+      assert.equal(loadUserConfig(cwd).emptyValue, "empty_string");
     });
   });
 
