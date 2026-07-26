@@ -69,12 +69,18 @@ ntn-lua --help
 
 ### Setup
 
+From your Rojo project root:
+
+1. Create a `.env` file with your Notion integration secret (see below).
+2. Generate `ntn-lua.toml`:
+
 ```bash
-cp .env.example .env
-cp ntn-lua.toml.example ntn-lua.toml
+ntn-lua init
 ```
 
-Edit `.env` with your Notion integration secret. Optionally copy and edit `ntn-lua.toml` for default database and output settings — the file is **recommended** but **not required** when you pass `-d` / `-o` on the CLI. Both files are read from `process.cwd()`, so run `ntn-lua` from the directory that contains them (typically the Rojo project root).
+3. Edit `ntn-lua.toml` — set `database_id` and `output` at minimum.
+
+Both files are read from `process.cwd()`, so run `ntn-lua` from the directory that contains them (typically the Rojo project root). `ntn-lua.toml` is **recommended** but **not required** when you pass `-d` / `-o` on the CLI.
 
 Create a Notion integration and connect your database before the first sync — expand **Notion setup** below.
 
@@ -87,10 +93,10 @@ Create a Notion integration and connect your database before the first sync — 
 2. **Copy the Internal Integration Secret** into `.env` as `NOTION_API_TOKEN`.
 
 3. **Capabilities** (integration settings → Capabilities):
-   - **Read content** — required for all modes
-   - **Update content** and **Insert content** — required only when writing to a Notion code block (default output). File output with `-o` needs **Read content** only
+   - **Read content** — required for pull (fetch database records)
+   - **Update content** and **Insert content** — required when writing to a Notion code block (default pull output without `-o`), or when using **`ntn-lua push`**
 
-4. **Share your database** with the integration: open the database → **⋯** → **Connections** / **Share** → **Invite** → select your integration. For code block mode, also share the page where Luau should be written.
+4. **Share your database** with the integration: open the database → **⋯** → **Connections** / **Share** → **Invite** → select your integration. For code block mode or **`ntn-lua push`**, also share the parent page where the database or code block should be created.
 
 5. **Database ID**: copy from the database URL — the 32-character hex segment (hyphens optional). If the database has multiple data sources, pass a `data_source_id` directly (see [Usage](#write-to-a-notion-code-block-default)).
 
@@ -102,9 +108,15 @@ Create a Notion integration and connect your database before the first sync — 
 
 #### Environment variables (`.env`)
 
+Create `.env` in your project root:
+
+```env
+NOTION_API_TOKEN=secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `NOTION_API_TOKEN` | Yes | Notion integration internal secret |
+| `NOTION_API_TOKEN` | Yes | Notion integration internal secret from [notion.so/my-integrations](https://www.notion.so/my-integrations) |
 
 #### Configuration (`ntn-lua.toml`)
 
@@ -131,7 +143,7 @@ Relation columns are embedded automatically. See [Nested relations](./docs/neste
 
 #### Migration from v0.1.x
 
-1. Copy `ntn-lua.toml.example` to `ntn-lua.toml` and set `database_id` / `output` (replacing `NOTION_DATABASE_ID` / `NOTION_OUTPUT_DIR` in `.env`).
+1. Run `ntn-lua init` (or create `ntn-lua.toml` manually) and set `database_id` / `output` (replacing `NOTION_DATABASE_ID` / `NOTION_OUTPUT_DIR` in `.env`).
 2. If your database has **Relation columns**, expect new nested fields in generated Luau. Share related databases with your Notion integration.
 3. Optionally set `empty_value` and `empty_relation` — both default to `omit`.
 
@@ -156,7 +168,7 @@ output = "src/shared/Config"
 # empty_relation = "omit"    # omit | empty_table
 ```
 
-See [ntn-lua.toml.example](./ntn-lua.toml.example) for a commented template.
+Run `ntn-lua init` to generate a commented template in your project root.
 
 ### First sync
 
@@ -249,11 +261,13 @@ export_types = false
 
 ## Features
 
+- **`ntn-lua init`** — Generate a commented `ntn-lua.toml` in the project root
 - **`ntn-lua` CLI** — Standalone binary compiled with Bun, distributed via Rokit (end users do not install Node or Bun)
 - **Full record fetch** — Notion API pagination
 - **Automatic `export type`** — Notion schema → Luau types; optional fields inferred from record coverage
 - **Type conversion** — Notion properties → Luau values
 - **Notion writes** — Find and update a `language = lua` code block, or append one (Luau in the UI is supported)
+- **`ntn-lua push`** — Create a new Notion database from a local `.luau` ModuleScript (see [Push to Notion](#push-to-notion))
 - **File output** — `--output` writes locally only (no Notion writes). Accepts a directory or `.lua` / `.luau` path
 - **StyLua formatting** — Warn and continue on failure; disable with `format = false` in `ntn-lua.toml`
 - **Title column = record key** — Duplicate or empty values are errors
@@ -313,18 +327,49 @@ ntn-lua -d <DATABASE_ID> -o ./output/Weapons.luau
 ### Options
 
 ```bash
+ntn-lua init
 ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>]
+ntn-lua push <file.luau> [-p <page-id>]
 ```
 
-| Option | Description |
+| Command / option | Description |
 | --- | --- |
-| `<database-id>` | Positional database or data source ID when `-d` is omitted |
-| `-d, --database-id` | Source `database_id` or `data_source_id` (overrides `ntn-lua.toml`) |
-| `-p, --page-id` | Notion page ID for the code block (ignored in file output mode; overrides `ntn-lua.toml`) |
-| `-o, --output` | Output directory or `.lua` / `.luau` file path (overrides `ntn-lua.toml`) |
+| `init` | Create `ntn-lua.toml` in the current directory |
+| `<database-id>` | Positional database or data source ID when `-d` is omitted (pull mode) |
+| `-d, --database-id` | Source `database_id` or `data_source_id` (overrides `ntn-lua.toml`; pull mode) |
+| `-p, --page-id` | Notion page ID for the code block (pull) or parent page for a new database (`push`; overrides `ntn-lua.toml`) |
+| `-o, --output` | Output directory or `.lua` / `.luau` file path (overrides `ntn-lua.toml`; pull mode) |
 | `-h, --help` | Show help |
 
 TOML-only settings (`format`, `export_types`) are documented in [Configuration](#configuration-ntn-luatoml).
+
+### Push to Notion
+
+Create a **new** Notion database from a local `.luau` ModuleScript:
+
+```bash
+ntn-lua push ./output/Weapons.luau -p <PAGE_ID>
+# or with page_id in ntn-lua.toml
+ntn-lua push ./output/Weapons.luau
+```
+
+- **Parent page:** `-p` / `--page-id` or `ntn-lua.toml` `page_id` (required — error if neither is set)
+- **Database title:** the module variable name from the file (for example, `Weapons` from `local Weapons = { ... }`)
+- **Record keys:** each top-level table key becomes the Notion **Name** (Title) column
+- **Integration capabilities:** **Insert content** (and **Read content**) on the parent page
+
+**v1 limitations (push):**
+
+- Flat properties only: **Number**, **Checkbox**, **Rich Text**, and **Multi-select** are inferred from Luau values
+- **Nested relation dictionaries** (tables embedded by pull) are **not** supported — push will error during schema inference
+- Select, Date, URL, Status, Formula, and other Notion types are not inferred from Luau strings alone
+- Always creates a **new** database; it does not update an existing one
+
+On success:
+
+```text
+Pushed N record(s) to new database <databaseId> (data_source <dataSourceId>) from <moduleName>.
+```
 
 ---
 
@@ -430,7 +475,7 @@ return Weapons
 - [Rokit](https://github.com/rojo-rbx/rokit)
 - [StyLua](https://github.com/JohnnyMorganz/StyLua) (`ntn-lua` spawns `stylua`; install both via Rokit)
 - `NOTION_API_TOKEN` (in `.env`)
-- `ntn-lua.toml` in the project root (recommended; see [ntn-lua.toml.example](./ntn-lua.toml.example)) — omit if you always pass `-d` / `-o`
+- `ntn-lua.toml` in the project root (recommended; run `ntn-lua init` to create it) — omit if you always pass `-d` / `-o`
 - Target pages and databases shared with your Notion integration (see [Notion setup](#notion-setup))
 
 ---
@@ -490,9 +535,14 @@ bun run start -- --help
 ```
 src/
   cli.ts            # CLI entry
+  init.ts           # ntn-lua init template writer
   config.ts         # ntn-lua.toml loader
   env.ts            # .env loader
-  generate.ts       # orchestration
+  generate.ts       # pull orchestration
+  push.ts           # push orchestration
+  luau-parser.ts    # Luau ModuleScript parser
+  schema-infer.ts   # Notion schema inference from Luau records
+  notion-write.ts   # Notion database create / record insert
   resolve-page.ts   # Notion write target
   stylua.ts         # formatting
   file-output.ts    # file output

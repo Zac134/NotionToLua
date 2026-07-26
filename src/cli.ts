@@ -20,6 +20,8 @@ import { generateLuauCode } from "./generate.js";
 import { resolveModuleName } from "./module-name.js";
 import { createNotionClient } from "./notion-client.js";
 import { getDataSourceTitle, resolveDataSource } from "./notion.js";
+import { initConfig } from "./init.js";
+import { pushLuauFile } from "./push.js";
 import { resolvePageId as resolveNotionPageId } from "./resolve-page.js";
 import { formatLuauCode } from "./stylua.js";
 
@@ -37,22 +39,30 @@ const { values, positionals } = parseArgs({
 
 function printHelp(): void {
   console.log(`Usage:
+  ntn-lua init
   ntn-lua [-d <id>] [<database-id>] [-p <page-id>] [-o <dir-or-file>]
+  ntn-lua push <file.luau> [-p <page-id>]
 
 Examples:
+  ntn-lua init
   ntn-lua -d <id> -o ./output
   ntn-lua -d <id> -o ./output/Weapons.luau
   ntn-lua                          (database_id / output in ntn-lua.toml)
+  ntn-lua push ./output/Weapons.luau -p <page-id>
+
+Commands:
+  init                Create ntn-lua.toml in the current directory
+  push                Create a new Notion database from a local .luau ModuleScript
 
 Options:
-  -d, --database-id   Source database_id or data_source_id
-  -p, --page-id       Notion page ID to write the Luau code block to (ignored in file output mode)
-  -o, --output        Output directory or .lua / .luau file path
+  -d, --database-id   Source database_id or data_source_id (pull mode)
+  -p, --page-id       Notion page ID (parent for push; code block target in pull mode)
+  -o, --output        Output directory or .lua / .luau file path (pull mode)
   -h, --help          Show help
 
 Configuration (ntn-lua.toml):
   database_id         Default database_id or data_source_id
-  page_id             Default Notion page ID for code block mode
+  page_id             Default Notion page ID for code block / push parent page
   output              Default output directory or .lua / .luau file path
   format              Run Stylua formatting (default: true)
   export_types        Emit Luau export types (default: true)
@@ -72,13 +82,70 @@ function writeWarning(message: string): void {
   process.stderr.write(`Warning: ${message}\n`);
 }
 
+function runInit(): number {
+  try {
+    const configPath = initConfig();
+    console.log(`Created ${configPath}. Edit database_id and output, then run ntn-lua.`);
+    return 0;
+  } catch (error) {
+    process.stderr.write(`${toUserErrorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+async function runPush(config: ReturnType<typeof loadUserConfig>): Promise<number> {
+  const filePath = positionals[1]?.trim();
+
+  if (!filePath) {
+    writeWarning(
+      "No Luau file was provided. Usage: ntn-lua push <file.luau> [-p <page-id>]",
+    );
+    printHelp();
+    return 1;
+  }
+
+  const pageId = resolvePageIdFromConfig({
+    flag: values["page-id"],
+    config,
+  });
+
+  if (!pageId) {
+    writeWarning(
+      "No page ID was provided. Use -p or set page_id in ntn-lua.toml.",
+    );
+    printHelp();
+    return 1;
+  }
+
+  try {
+    const notion = createNotionClient(requireNotionToken());
+    const result = await pushLuauFile(notion, { filePath, pageId });
+
+    console.log(
+      `Pushed ${result.recordCount} record(s) to new database ${result.databaseId} (data_source ${result.dataSourceId}) from ${result.moduleName}.`,
+    );
+    return 0;
+  } catch (error) {
+    process.stderr.write(`${toUserErrorMessage(error)}\n`);
+    return 1;
+  }
+}
+
 async function run(): Promise<number> {
   if (values.help) {
     printHelp();
     return 0;
   }
 
+  if (positionals[0] === "init") {
+    return runInit();
+  }
+
   const config = loadUserConfig();
+
+  if (positionals[0] === "push") {
+    return runPush(config);
+  }
 
   const databaseId = resolveDatabaseId({
     flag: values["database-id"],

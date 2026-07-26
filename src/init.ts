@@ -1,4 +1,9 @@
-# Copy to ntn-lua.toml in your project root (the directory you run ntn-lua from).
+import { existsSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { NotionToLuaError } from "./errors.js";
+
+export const NTN_LUA_TOML_TEMPLATE = `# ntn-lua configuration (run ntn-lua from the directory that contains this file).
 #
 # CLI flags override database_id, page_id, and output when provided.
 # format and export_types are configured here only (both default to true).
@@ -31,3 +36,17 @@ output = "src/shared/Config"
 
 # Relation columns are embedded automatically as Luau dictionaries.
 # See docs/nested-relations.md for database design examples.
+`;
+
+export function initConfig(cwd = process.cwd()): string {
+  const configPath = resolve(cwd, "ntn-lua.toml");
+
+  if (existsSync(configPath)) {
+    throw new NotionToLuaError(
+      "ntn-lua.toml already exists. Edit it directly or delete it before running init again.",
+    );
+  }
+
+  writeFileSync(configPath, NTN_LUA_TOML_TEMPLATE, "utf8");
+  return configPath;
+}

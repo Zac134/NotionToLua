@@ -23,6 +23,23 @@ export interface LuauRecord {
   properties: Record<string, LuauValue>;
 }
 
+export type InferredNotionType =
+  | "number"
+  | "checkbox"
+  | "rich_text"
+  | "multi_select";
+
+export interface InferredProperty {
+  name: string;
+  notionType: InferredNotionType;
+  multiSelectOptions?: string[];
+}
+
+export interface InferredNotionSchema {
+  titlePropertyName: "Name";
+  properties: InferredProperty[];
+}
+
 export type ExportableProperty = {
   name: string;
   notionType: string;
