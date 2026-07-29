@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-29
+
 ### Added
 
 - **Array relations (`BaseName [Array]`)** — Relation columns with numeric related Titles are sorted and emitted as dense Luau arrays. Push creates a related database and renumbers titles to `"1".."N"`. See [docs/nested-relations.md](./docs/nested-relations.md).
