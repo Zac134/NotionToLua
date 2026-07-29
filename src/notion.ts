@@ -9,7 +9,12 @@ import type {
 import { NotionToLuaError } from "./errors.js";
 import { resolveLuauKeyFormat } from "./formatter.js";
 import {
+  convertRichTextToLuauValue,
+  resolveExportableProperty,
+} from "./typed-rich-text.js";
+import {
   SUPPORTED_PROPERTY_TYPES,
+  type ExportableProperty,
   type LuauRecord,
   type LuauValue,
 } from "./types.js";
@@ -270,20 +275,82 @@ export function extractTitleKey(
   return title;
 }
 
+export function convertPagePropertyToLuauValue(
+  pageProperty: PageProperty | undefined,
+  dataSourceProperty:
+    | DataSourceObjectResponse["properties"][string]
+    | undefined,
+  exportableProperty: ExportableProperty,
+): LuauValue | undefined {
+  if (!pageProperty || !dataSourceProperty) {
+    return undefined;
+  }
+
+  if (pageProperty.type !== dataSourceProperty.type) {
+    return undefined;
+  }
+
+  const converted = convertPropertyValue(pageProperty);
+  if (converted === undefined) {
+    return undefined;
+  }
+
+  if (
+    exportableProperty.robloxType &&
+    dataSourceProperty.type === "rich_text" &&
+    typeof converted === "string"
+  ) {
+    return convertRichTextToLuauValue(
+      exportableProperty.robloxType,
+      converted,
+    ).value;
+  }
+
+  return converted;
+}
+
+export type TypedConversionWarning = {
+  recordKey: string;
+  propertyName: string;
+  robloxType: string;
+  rawValue: string;
+};
+
+export function collectTypedConversionWarnings(
+  recordKey: string,
+  exportableProperty: ExportableProperty,
+  rawValue: string,
+): TypedConversionWarning | null {
+  if (!exportableProperty.robloxType) {
+    return null;
+  }
+
+  const { usedFallback } = convertRichTextToLuauValue(
+    exportableProperty.robloxType,
+    rawValue,
+  );
+
+  if (!usedFallback) {
+    return null;
+  }
+
+  return {
+    recordKey,
+    propertyName: exportableProperty.name,
+    robloxType: exportableProperty.robloxType,
+    rawValue,
+  };
+}
+
 export function pagesToLuauRecords(
   pages: PageObjectResponse[],
   dataSource: DataSourceObjectResponse,
+  options?: {
+    onTypedFallback?: (warning: TypedConversionWarning) => void;
+  },
 ): LuauRecord[] {
   const titlePropertyName = resolveTitlePropertyName(dataSource);
-  const exportableProperties = Object.entries(dataSource.properties)
-    .filter(([propertyName, property]) => {
-      if (propertyName === titlePropertyName) {
-        return false;
-      }
-
-      return SUPPORTED_PROPERTY_TYPES.has(property.type);
-    })
-    .map(([propertyName]) => propertyName);
+  const exportableProperties = listExportableProperties(dataSource);
 
   const seenKeys = new Map<string, number>();
   const records: LuauRecord[] = [];
@@ -301,25 +368,38 @@ export function pagesToLuauRecords(
 
     const properties: Record<string, LuauValue> = {};
 
-    for (const propertyName of exportableProperties) {
-      const pageProperty = page.properties[propertyName];
-      const dataSourceProperty = dataSource.properties[propertyName];
+    for (const exportableProperty of exportableProperties) {
+      const notionPropertyName =
+        exportableProperty.notionPropertyName ?? exportableProperty.name;
+      const pageProperty = page.properties[notionPropertyName];
+      const dataSourceProperty = dataSource.properties[notionPropertyName];
 
-      if (!pageProperty || !dataSourceProperty) {
-        continue;
-      }
-
-      if (pageProperty.type !== dataSourceProperty.type) {
-        continue;
-      }
-
-      const converted = convertPropertyValue(pageProperty);
+      const converted = convertPagePropertyToLuauValue(
+        pageProperty,
+        dataSourceProperty,
+        exportableProperty,
+      );
 
       if (converted === undefined) {
         continue;
       }
 
-      properties[propertyName] = converted;
+      if (
+        exportableProperty.robloxType &&
+        typeof converted === "string" &&
+        dataSourceProperty?.type === "rich_text"
+      ) {
+        const warning = collectTypedConversionWarnings(
+          key,
+          exportableProperty,
+          converted,
+        );
+        if (warning) {
+          options?.onTypedFallback?.(warning);
+        }
+      }
+
+      properties[exportableProperty.name] = converted;
     }
 
     records.push({
@@ -340,7 +420,7 @@ export function listExportablePropertyNames(
 
 export function listExportableProperties(
   dataSource: DataSourceObjectResponse,
-): Array<{ name: string; notionType: string }> {
+): ExportableProperty[] {
   const titlePropertyName = resolveTitlePropertyName(dataSource);
 
   return Object.entries(dataSource.properties)
@@ -349,8 +429,7 @@ export function listExportableProperties(
         propertyName !== titlePropertyName &&
         SUPPORTED_PROPERTY_TYPES.has(property.type),
     )
-    .map(([propertyName, property]) => ({
-      name: propertyName,
-      notionType: property.type,
-    }));
+    .map(([propertyName, property]) =>
+      resolveExportableProperty(propertyName, property.type),
+    );
 }

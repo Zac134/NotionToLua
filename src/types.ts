@@ -1,12 +1,48 @@
-export type LuauPrimitive = string | number | boolean | string[];
-
 export interface LuauTable {
   [key: string]: LuauValue;
 }
 
-export type LuauValue = LuauPrimitive | LuauTable | null;
+export type RobloxTypeName =
+  | "Vector2"
+  | "Vector3"
+  | "Color3"
+  | "UDim"
+  | "UDim2"
+  | "Rect"
+  | "NumberRange"
+  | "CFrame";
 
-export type LuauKeyFormat = "identifier" | "bracket";
+export type TypedRobloxValue =
+  | { kind: "Vector2"; x: number; y: number }
+  | { kind: "Vector3"; x: number; y: number; z: number }
+  | { kind: "Color3"; r: number; g: number; b: number }
+  | { kind: "UDim"; scale: number; offset: number }
+  | { kind: "UDim2"; xScale: number; xOffset: number; yScale: number; yOffset: number }
+  | { kind: "Rect"; minX: number; minY: number; maxX: number; maxY: number }
+  | { kind: "NumberRange"; min: number; max: number }
+  | {
+      kind: "CFrame";
+      px: number;
+      py: number;
+      pz: number;
+      rx: number;
+      ry: number;
+      rz: number;
+    };
+
+export type LuauValue =
+  | string
+  | number
+  | boolean
+  | LuauTable
+  | TypedRobloxValue
+  | LuauValue[]
+  | null;
+
+/** @deprecated Use LuauValue[] with isStringArray() for multi-select arrays. */
+export type LuauPrimitive = string | number | boolean | string[];
+
+export type LuauKeyFormat = "identifier" | "bracket" | "numeric";
 
 export type EmptyValueMode = "omit" | "nil" | "empty_string";
 
@@ -15,6 +51,7 @@ export type EmptyRelationMode = "omit" | "empty_table";
 export interface OutputOptions {
   emptyValue: EmptyValueMode;
   emptyRelation: EmptyRelationMode;
+  omitArrayIndex?: boolean;
 }
 
 export interface LuauRecord {
@@ -27,12 +64,17 @@ export type InferredNotionType =
   | "number"
   | "checkbox"
   | "rich_text"
-  | "multi_select";
+  | "multi_select"
+  | "relation";
 
 export interface InferredProperty {
   name: string;
   notionType: InferredNotionType;
+  notionPropertyName?: string;
+  robloxType?: RobloxTypeName;
   multiSelectOptions?: string[];
+  relationMeta?: RelationPropertyMeta;
+  relatedDataSourceId?: string;
 }
 
 export interface InferredNotionSchema {
@@ -43,6 +85,8 @@ export interface InferredNotionSchema {
 export type ExportableProperty = {
   name: string;
   notionType: string;
+  notionPropertyName?: string;
+  robloxType?: RobloxTypeName;
   relationMeta?: RelationPropertyMeta;
 };
 
@@ -53,6 +97,14 @@ export type RelationPropertyMeta =
     }
   | {
       kind: "nested_dict";
+      entryProperties: ExportableProperty[];
+    }
+  | {
+      kind: "scalar_array";
+      valueType: string;
+    }
+  | {
+      kind: "nested_array";
       entryProperties: ExportableProperty[];
     };
 
@@ -87,8 +139,30 @@ export function isLuauTable(value: LuauValue): value is LuauTable {
   return (
     value !== null &&
     typeof value === "object" &&
-    !Array.isArray(value)
+    !Array.isArray(value) &&
+    !isTypedRobloxValue(value)
   );
+}
+
+export function isTypedRobloxValue(value: LuauValue): value is TypedRobloxValue {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    "kind" in value &&
+    typeof (value as TypedRobloxValue).kind === "string"
+  );
+}
+
+export function isStringArray(value: LuauValue): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "string")
+  );
+}
+
+export function isLuauSequenceArray(value: LuauValue): value is LuauValue[] {
+  return Array.isArray(value) && !isStringArray(value);
 }
 
 export function isStringLikeNotionType(notionType: string): boolean {
@@ -130,6 +204,10 @@ export function isPropertyValuePresent(
   emptyValue: EmptyValueMode,
   notionType: string,
 ): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
   if (value !== null) {
     return true;
   }

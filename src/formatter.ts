@@ -1,5 +1,7 @@
+import { isNumericRecordKey } from "./record-index.js";
 import type { LuauKeyFormat, LuauTable, LuauValue } from "./types.js";
-import { isLuauTable } from "./types.js";
+import { isLuauTable, isStringArray, isTypedRobloxValue } from "./types.js";
+import { formatRobloxValue } from "./typed-rich-text.js";
 
 const IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -8,12 +10,20 @@ export function isValidLuauIdentifier(value: string): boolean {
 }
 
 export function resolveLuauKeyFormat(value: string): LuauKeyFormat {
+  if (isNumericRecordKey(value)) {
+    return "numeric";
+  }
+
   return isValidLuauIdentifier(value) ? "identifier" : "bracket";
 }
 
 export function formatLuauKey(key: string, format: LuauKeyFormat): string {
   if (format === "identifier") {
     return key;
+  }
+
+  if (format === "numeric") {
+    return `[${Number(key)}]`;
   }
 
   return `[${formatLuauString(key)}]`;
@@ -57,6 +67,20 @@ function formatLuauTable(table: LuauTable, includeNilKeys: boolean): string {
   return `{\n${indentBlock(lines.join("\n"))}\n}`;
 }
 
+function formatLuauSequenceArray(
+  items: LuauValue[],
+  includeNilKeys: boolean,
+): string {
+  if (items.length === 0) {
+    return "{}";
+  }
+
+  const formattedItems = items.map((item) =>
+    formatLuauValue(item, includeNilKeys),
+  );
+  return `{ ${formattedItems.join(", ")} }`;
+}
+
 export function formatLuauValue(
   value: LuauValue,
   includeNilKeys = false,
@@ -77,9 +101,17 @@ export function formatLuauValue(
     return Number.isInteger(value) ? String(value) : String(value);
   }
 
+  if (isTypedRobloxValue(value)) {
+    return formatRobloxValue(value);
+  }
+
   if (Array.isArray(value)) {
-    const items = value.map((item) => formatLuauString(item)).join(", ");
-    return `{ ${items} }`;
+    if (isStringArray(value)) {
+      const items = value.map((item) => formatLuauString(item)).join(", ");
+      return `{ ${items} }`;
+    }
+
+    return formatLuauSequenceArray(value, includeNilKeys);
   }
 
   if (isLuauTable(value)) {

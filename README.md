@@ -100,7 +100,7 @@ Create a Notion integration and connect your database before the first sync — 
 
 5. **Database ID**: copy from the database URL — the 32-character hex segment (hyphens optional). If the database has multiple data sources, pass a `data_source_id` directly (see [Usage](#write-to-a-notion-code-block-default)).
 
-6. **Title column**: one Title-type property becomes each record's module key. Empty or duplicate titles are errors; exactly one Title column is expected.
+6. **Title column**: one Title-type property becomes each record's module key. Empty or duplicate titles are errors; exactly one Title column is expected. Numeric titles (`0`, `1`, `12` — same rules as array relations) are emitted as Luau numeric indexes (`[1]`, not `["1"]`) and sorted numerically. Set `omit_array_index = true` to drop indexes entirely when titles form a dense `1..N` sequence.
 
 7. **Recommended for Roblox projects**: use `-o` for local file output. Connect the database to your integration; only the **Read content** capability is required — `ntn-lua` does not write back to Notion in file mode.
 
@@ -127,15 +127,20 @@ NOTION_API_TOKEN=secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 >
 > See [CHANGELOG.md](./CHANGELOG.md) and [Nested relations](./docs/nested-relations.md) for migration details.
 
-| Key | Type | Default | Purpose |
+Settings are grouped into `[source]`, `[paths]`, and `[emit]` sections. Flat keys at the root are still accepted for backward compatibility; do not mix flat keys with section tables.
+
+| Section / key | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `database_id` | string | — | Default `database_id` or `data_source_id` |
-| `page_id` | string | — | Notion page ID for code block mode |
-| `output` | string | — | Output directory or `.lua` / `.luau` file path |
-| `format` | boolean | `true` | Run StyLua formatting after generation |
-| `export_types` | boolean | `true` | Emit Luau `export type` definitions |
-| `empty_value` | string | `"omit"` | How to emit null values: `omit`, `nil`, or `empty_string` |
-| `empty_relation` | string | `"omit"` | How to emit empty relations: `omit` or `empty_table` |
+| `[source]` `database_id` | string | — | Default `database_id` or `data_source_id` |
+| `[source]` `code_block_parent_page_id` | string | — | Notion page ID for code block mode |
+| `[paths]` `output` | string | — | Output directory or `.lua` / `.luau` file path |
+| `[emit]` `format` | boolean | `true` | Run StyLua formatting after generation |
+| `[emit]` `export_types` | boolean | `true` | Emit Luau `export type` definitions |
+| `[emit]` `empty_value` | string | `"omit"` | How to emit null values: `omit`, `nil`, or `empty_string` |
+| `[emit]` `empty_relation` | string | `"omit"` | How to emit empty relations: `omit` or `empty_table` |
+| `[emit]` `omit_array_index` | boolean | `false` | When all record Titles are numeric and form a dense `1..N` sequence, emit a keyless Luau array and `export type Module = { Entry }` instead of `[1]..[N]` keys |
+
+Flat `page_id` at the root is still accepted as a legacy alias for `code_block_parent_page_id`; do not set both.
 
 Unknown keys are rejected. If `ntn-lua.toml` is missing, `format` and `export_types` default to `true`; other keys stay unset. You can omit the file entirely and supply `-d` and `-o` on every run.
 
@@ -153,22 +158,32 @@ Relation columns are embedded automatically. See [Nested relations](./docs/neste
 | --- | --- |
 | `database_id` | `-d` / `--database-id` → positional argument → `ntn-lua.toml` |
 | `output` | `-o` / `--output` → `ntn-lua.toml` |
-| `page_id` | `-p` / `--page-id` → `ntn-lua.toml` |
+| `code_block_parent_page_id` | `-p` / `--page-id` → `ntn-lua.toml` `[source]` (flat `page_id` still accepted) |
 
 `format` and `export_types` are read from `ntn-lua.toml` only (no CLI flags).
 
 Example `ntn-lua.toml`:
 
 ```toml
+# ntn-lua — run from the directory that contains this file.
+# CLI overrides: -d database_id, -p page, -o output.
+
+[source]
 database_id = "your-database-or-data-source-id"
+code_block_parent_page_id = "your-page-id"
+
+[paths]
 output = "src/shared/Config"
-# format = true
-# export_types = true
-# empty_value = "omit"       # omit | nil | empty_string
-# empty_relation = "omit"    # omit | empty_table
+
+[emit]
+format = true
+export_types = true
+empty_value = "omit"         # omit | nil | empty_string
+empty_relation = "omit"      # omit | empty_table
+omit_array_index = false
 ```
 
-Run `ntn-lua init` to generate a commented template in your project root.
+Run `ntn-lua init` to generate a template with default values in your project root.
 
 ### First sync
 
@@ -261,7 +276,7 @@ export_types = false
 
 ## Features
 
-- **`ntn-lua init`** — Generate a commented `ntn-lua.toml` in the project root
+- **`ntn-lua init`** — Generate `ntn-lua.toml` with default values in the project root
 - **`ntn-lua` CLI** — Standalone binary compiled with Bun, distributed via Rokit (end users do not install Node or Bun)
 - **Full record fetch** — Notion API pagination
 - **Automatic `export type`** — Notion schema → Luau types; optional fields inferred from record coverage
@@ -272,6 +287,8 @@ export_types = false
 - **StyLua formatting** — Warn and continue on failure; disable with `format = false` in `ntn-lua.toml`
 - **Title column = record key** — Duplicate or empty values are errors
 - **Nested dictionaries** — Relation columns embed as Luau dictionaries (`{ Fire = 10 }` or deeper `{ Fire = { Power = 10, Duration = 3 } }`) — see [Nested relations](./docs/nested-relations.md)
+- **Typed Rich Text** — Rich Text columns named `BaseName [TypeName]` (for example `Position [Vector3]`) convert to Roblox values — see [Typed Rich Text](./docs/typed-rich-text.md)
+- **Array relations** — Relation columns named `BaseName [Array]` with numeric related Titles emit Luau arrays — see [Nested relations](./docs/nested-relations.md)
 
 ### Linting (optional)
 
@@ -287,7 +304,7 @@ export_types = false
 
 - **Database ID:** `-d` / `--database-id` → positional argument → `ntn-lua.toml` `database_id`
 - **Output path:** `-o` / `--output` → `ntn-lua.toml` `output` (if unset, writes to a Notion code block)
-- **Page ID:** `-p` / `--page-id` → `ntn-lua.toml` `page_id`
+- **Page ID:** `-p` / `--page-id` → `ntn-lua.toml` `[source]` `code_block_parent_page_id` (flat `page_id` still accepted)
 - **Formatting / types:** `ntn-lua.toml` only (`format`, `export_types`; both default to `true`)
 
 ### Write to a Notion code block (default)
@@ -300,7 +317,7 @@ ntn-lua <DATABASE_OR_DATA_SOURCE_ID>
 
 Target page resolution order:
 
-1. `-p` / `--page-id` or `ntn-lua.toml` `page_id` (when set)
+1. `-p` / `--page-id` or `ntn-lua.toml` `[source]` `code_block_parent_page_id` (when set; flat `page_id` still accepted)
 2. `database_parent.page_id` on the data source
 3. Walk parents from `database_parent.block_id` via `blocks.retrieve`
 4. Error when unresolvable (for example, a database directly under the workspace)
@@ -349,11 +366,11 @@ Create a **new** Notion database from a local `.luau` ModuleScript:
 
 ```bash
 ntn-lua push ./output/Weapons.luau -p <PAGE_ID>
-# or with page_id in ntn-lua.toml
+# or with code_block_parent_page_id in ntn-lua.toml
 ntn-lua push ./output/Weapons.luau
 ```
 
-- **Parent page:** `-p` / `--page-id` or `ntn-lua.toml` `page_id` (required — error if neither is set)
+- **Parent page:** `-p` / `--page-id` or `ntn-lua.toml` `[source]` `code_block_parent_page_id` (required — error if neither is set; flat `page_id` still accepted)
 - **Database title:** the module variable name from the file (for example, `Weapons` from `local Weapons = { ... }`)
 - **Record keys:** each top-level table key becomes the Notion **Name** (Title) column
 - **Integration capabilities:** **Insert content** (and **Read content**) on the parent page
@@ -391,11 +408,14 @@ Pushed N record(s) to new database <databaseId> (data_source <dataSourceId>) fro
 
 Unsupported types (Rollup, Files, People, and others) are skipped. Relation columns are embedded automatically as Luau dictionaries.
 
+**Typed Rich Text:** name a Rich Text column `BaseName [TypeName]` (for example `Spawn [CFrame]` with value `10, 5, -20 | 0, 90, 0`) to emit Roblox constructors in generated Luau. See [docs/typed-rich-text.md](./docs/typed-rich-text.md).
+
 Global empty-value settings in `ntn-lua.toml`:
 
 ```toml
 empty_value = "omit"       # omit | nil | empty_string
 empty_relation = "omit"    # omit | empty_table
+# omit_array_index = false   # keyless array when Titles are 1..N
 ```
 
 See [docs/nested-relations.md](./docs/nested-relations.md) for scalar vs nested dictionary examples and empty-value behavior.
@@ -428,7 +448,7 @@ Effects = {
 -- type: Effects: { [string]: { Power: number?, Duration: number? } }?
 ```
 
-Generated `export type` fields use `?` when a property is missing on some records but present on others. Property names and record keys that are not valid Luau identifiers use bracket notation (for example, `["my-item"]`).
+Generated `export type` fields use `?` when a property is missing on some records but present on others. Property names and record keys that are not valid Luau identifiers use bracket notation (for example, `["my-item"]`). Numeric record titles use numeric indexes in values (for example, `[1] = { ... }`) and `[number]: Entry` in module types; with `omit_array_index = true` and dense `1..N` titles, the module becomes a keyless array instead.
 
 ---
 

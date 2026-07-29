@@ -52,6 +52,50 @@ return Weapons
 3. The related record **Title** becomes the Luau dictionary key.
 4. The related record fields become the dictionary values.
 
+## Array relations (`BaseName [Array]`)
+
+Use a Relation column named `Items [Array]` when you want a **Luau array** instead of a string-keyed dictionary.
+
+### Related database (master)
+
+| Title | Damage (number) |
+|---|---|
+| 2 | 20 |
+| 10 | 100 |
+
+Titles must be **non-negative integer strings** without leading zeros (`0`, `1`, `12` OK — `01` NG). They are used as **sort keys only**. Output is always a dense 1..N array in numeric order (for example Title `10` before `2` becomes the second element after `2`).
+
+### Main database
+
+| Title | Items [Array] (Relation → master) |
+|---|---|
+| Sword | 2, 10 |
+
+### Generated Luau
+
+```lua
+Sword = {
+    Items = { 20, 100 },
+},
+-- type: Items: { number }?
+```
+
+When the related database has **two or more exportable columns**, each array entry becomes a table:
+
+```lua
+Items = {
+    { Power = 10, Duration = 3 },
+    { Power = 5, Duration = 1 },
+},
+-- type: Items: { { Power: number?, Duration: number? } }?
+```
+
+### Rules
+
+- **Opt-in only** — relation columns without `[Array]` stay dictionaries (`{ Fire = 10 }`), even when titles are numeric strings.
+- **Duplicate numeric titles** in the same relation are errors.
+- **Push** renumbers related titles to `"1"`, `"2"`, …, `"N"` in array order (L2 semantics).
+
 ## Scalar vs nested dictionaries
 
 When the related database has **exactly one exportable column** (excluding Title), values are collapsed into a scalar dictionary:
@@ -123,4 +167,5 @@ See also [README breaking changes](../README.md#configuration-ntn-luatoml) when 
 |---|---|
 | v0.3.0 | Relation auto-embed, scalar/nested collapse, global empty handling |
 | v0.4 | Configurable embed depth, reference-only mode |
+| v0.5 | Typed Rich Text (`BaseName [TypeName]`) for Roblox values — see [typed-rich-text.md](./typed-rich-text.md) |
 | Future | JSON-in-Rich-Text escape hatch, multi-module output |

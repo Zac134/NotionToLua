@@ -126,6 +126,16 @@ describe("formatLuauValue nested tables", () => {
     assert.match(output, /Duration = 3,/);
   });
 
+  it("formats sequence arrays", () => {
+    const output = formatLuauValue([
+      { Damage: 10 },
+      { Damage: 20 },
+    ]);
+
+    assert.match(output, /Damage = 10,/);
+    assert.match(output, /Damage = 20,/);
+  });
+
   it("includes nil keys when requested", () => {
     const output = formatLuauValue({ Fire: null }, true);
     assert.match(output, /Fire = nil,/);
@@ -254,6 +264,108 @@ describe("resolveEmbeddedRelationsForRecords", () => {
         : undefined,
       "number",
     );
+  });
+
+  it("embeds array relations sorted by numeric titles", async () => {
+    const itemDataSource = createDataSource("items-ds", {
+      Damage: {
+        id: "damage",
+        name: "Damage",
+        type: "number",
+        number: { format: "number" },
+        description: null,
+      },
+    });
+
+    const weaponsDataSource = createDataSource("weapons-ds", {
+      "Items [Array]": {
+        id: "items",
+        name: "Items [Array]",
+        type: "relation",
+        relation: {
+          database_id: "items-db",
+          data_source_id: "items-ds",
+        },
+        description: null,
+      },
+    });
+
+    const itemTwo = createPage("item-2", "2", {
+      Damage: { id: "damage", type: "number", number: 20 },
+    });
+    const itemTen = createPage("item-10", "10", {
+      Damage: { id: "damage", type: "number", number: 100 },
+    });
+    const swordPage = createPage("sword-page", "Sword", {
+      "Items [Array]": {
+        id: "items",
+        type: "relation",
+        relation: [{ id: "item-10" }, { id: "item-2" }],
+        has_more: false,
+      },
+    });
+
+    const records: LuauRecord[] = [
+      {
+        key: "Sword",
+        keyFormat: "identifier",
+        properties: {},
+      },
+    ];
+
+    const notion = {
+      databases: {
+        retrieve: async () => ({
+          data_sources: [{ id: "items-ds" }],
+        }),
+      },
+      dataSources: {
+        retrieve: async ({ data_source_id }: { data_source_id: string }) => {
+          if (data_source_id === "items-ds") {
+            return itemDataSource;
+          }
+
+          return weaponsDataSource;
+        },
+      },
+      pages: {
+        retrieve: async ({ page_id }: { page_id: string }) => {
+          if (page_id === "item-2") {
+            return itemTwo;
+          }
+
+          if (page_id === "item-10") {
+            return itemTen;
+          }
+
+          return swordPage;
+        },
+      },
+    };
+
+    const context = createRelationResolutionContext(
+      notion as never,
+      {
+        format: true,
+        exportTypes: true,
+        emptyValue: "omit",
+        emptyRelation: "omit",
+      },
+      [swordPage],
+    );
+
+    const properties = await resolveEmbeddedRelationsForRecords(
+      context,
+      records,
+      [swordPage],
+      weaponsDataSource,
+    );
+
+    assert.deepEqual(records[0]?.properties.Items, [20, 100]);
+
+    const itemsProperty = properties.find((property) => property.name === "Items");
+    assert.equal(itemsProperty?.notionPropertyName, "Items [Array]");
+    assert.equal(itemsProperty?.relationMeta?.kind, "scalar_array");
   });
 
   it("omits empty relations by default", async () => {

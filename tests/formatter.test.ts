@@ -33,7 +33,16 @@ describe("resolveLuauKeyFormat", () => {
 
   it("returns bracket for invalid keys", () => {
     assert.equal(resolveLuauKeyFormat("my-key"), "bracket");
-    assert.equal(resolveLuauKeyFormat("123"), "bracket");
+  });
+
+  it("returns numeric for numeric title keys", () => {
+    assert.equal(resolveLuauKeyFormat("1"), "numeric");
+    assert.equal(resolveLuauKeyFormat("12"), "numeric");
+    assert.equal(resolveLuauKeyFormat("0"), "numeric");
+  });
+
+  it("does not treat leading-zero numerics as numeric keys", () => {
+    assert.equal(resolveLuauKeyFormat("01"), "bracket");
   });
 });
 
@@ -48,6 +57,12 @@ describe("formatLuauKey", () => {
       formatLuauKey('say "hi"', "bracket"),
       '["say \\"hi\\""]',
     );
+  });
+
+  it("formats numeric keys with bracketed numbers", () => {
+    assert.equal(formatLuauKey("1", "numeric"), "[1]");
+    assert.equal(formatLuauKey("12", "numeric"), "[12]");
+    assert.equal(formatLuauKey("0", "numeric"), "[0]");
   });
 });
 
@@ -95,5 +110,12 @@ describe("formatLuauValue", () => {
   it("formats arrays as Luau string lists", () => {
     assert.equal(formatLuauValue(["alpha", "beta"]), '{ "alpha", "beta" }');
     assert.equal(formatLuauValue([]), "{  }");
+  });
+
+  it("formats typed Roblox values", () => {
+    assert.equal(
+      formatLuauValue({ kind: "Vector3", x: 1, y: 2, z: 3 }),
+      "Vector3.new(1, 2, 3)",
+    );
   });
 });

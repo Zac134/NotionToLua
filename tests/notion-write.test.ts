@@ -7,6 +7,7 @@ import {
   insertRecords,
   luauValueToNotionProperty,
 } from "../src/notion-write.js";
+import { serializeNotionValue } from "../src/typed-rich-text.js";
 import type { InferredNotionSchema, LuauRecord } from "../src/types.js";
 
 function record(
@@ -67,6 +68,55 @@ describe("luauValueToNotionProperty", () => {
       },
     );
   });
+
+  it("converts TypedRobloxValue to serialized rich_text", () => {
+    const value = { kind: "Vector3", x: 1, y: 2, z: 3 } as const;
+
+    assert.deepEqual(luauValueToNotionProperty("rich_text", value), {
+      rich_text: [
+        {
+          type: "text",
+          text: { content: serializeNotionValue(value) },
+        },
+      ],
+    });
+  });
+
+  it("throws on type mismatch for number", () => {
+    assert.throws(
+      () => luauValueToNotionProperty("number", "not a number"),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(error.message, /numeric value/);
+        return true;
+      },
+    );
+  });
+
+  it("throws on type mismatch for rich_text", () => {
+    assert.throws(
+      () => luauValueToNotionProperty("rich_text", 42),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(error.message, /string value/);
+        return true;
+      },
+    );
+  });
+
+  it("throws for relation notionType", () => {
+    assert.throws(
+      () => luauValueToNotionProperty("relation", []),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(
+          error.message,
+          /Relation property values must be created as related pages/,
+        );
+        return true;
+      },
+    );
+  });
 });
 
 describe("createDatabaseFromSchema", () => {
@@ -105,10 +155,9 @@ describe("createDatabaseFromSchema", () => {
       schema,
     });
 
-    assert.deepEqual(result, {
-      databaseId: "database-id",
-      dataSourceId: "data-source-id",
-    });
+    assert.equal(result.databaseId, "database-id");
+    assert.equal(result.dataSourceId, "data-source-id");
+    assert.equal(result.properties.length, 4);
     assert.deepEqual(createArgs, {
       parent: { type: "page_id", page_id: "parent-page-id" },
       title: [{ type: "text", text: { content: "Items" } }],
@@ -179,6 +228,189 @@ describe("createDatabaseFromSchema", () => {
         return true;
       },
     );
+  });
+
+  it("throws when create response omits data_sources", async () => {
+    const notion = {
+      databases: {
+        create: async () => ({
+          id: "database-id",
+        }),
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        createDatabaseFromSchema(notion as never, {
+          pageId: "parent-page-id",
+          databaseTitle: "Items",
+          schema,
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(error.message, /data source information is unavailable/);
+        return true;
+      },
+    );
+  });
+
+  it("creates related database for scalar_array relation", async () => {
+    const createCalls: unknown[] = [];
+    let callIndex = 0;
+
+    const notion = {
+      databases: {
+        create: async (args: unknown) => {
+          createCalls.push(args);
+          callIndex += 1;
+
+          if (callIndex === 1) {
+            return {
+              id: "related-database-id",
+              data_sources: [
+                { id: "related-data-source-id", name: "Items - effects" },
+              ],
+            };
+          }
+
+          return {
+            id: "parent-database-id",
+            data_sources: [{ id: "parent-data-source-id", name: "Items" }],
+          };
+        },
+      },
+    };
+
+    const relationSchema: InferredNotionSchema = {
+      titlePropertyName: "Name",
+      properties: [
+        { name: "damage", notionType: "number" },
+        {
+          name: "effects",
+          notionType: "relation",
+          relationMeta: { kind: "scalar_array", valueType: "number" },
+        },
+      ],
+    };
+
+    const result = await createDatabaseFromSchema(notion as never, {
+      pageId: "parent-page-id",
+      databaseTitle: "Items",
+      schema: relationSchema,
+    });
+
+    assert.equal(createCalls.length, 2);
+    assert.deepEqual(createCalls[0], {
+      parent: { type: "page_id", page_id: "parent-page-id" },
+      title: [{ type: "text", text: { content: "Items - effects" } }],
+      initial_data_source: {
+        properties: {
+          Name: { title: {} },
+          Value: { number: {} },
+        },
+      },
+    });
+    assert.deepEqual(createCalls[1], {
+      parent: { type: "page_id", page_id: "parent-page-id" },
+      title: [{ type: "text", text: { content: "Items" } }],
+      initial_data_source: {
+        properties: {
+          Name: { title: {} },
+          damage: { number: {} },
+          effects: {
+            relation: {
+              data_source_id: "related-data-source-id",
+              type: "single_property",
+              single_property: {},
+            },
+          },
+        },
+      },
+    });
+    assert.equal(result.databaseId, "parent-database-id");
+    assert.equal(result.dataSourceId, "parent-data-source-id");
+    assert.equal(result.properties[1]?.relatedDataSourceId, "related-data-source-id");
+  });
+
+  it("creates related database for nested_array relation", async () => {
+    const createCalls: unknown[] = [];
+    let callIndex = 0;
+
+    const notion = {
+      databases: {
+        create: async (args: unknown) => {
+          createCalls.push(args);
+          callIndex += 1;
+
+          if (callIndex === 1) {
+            return {
+              id: "related-database-id",
+              data_sources: [
+                { id: "related-data-source-id", name: "Items - items" },
+              ],
+            };
+          }
+
+          return {
+            id: "parent-database-id",
+            data_sources: [{ id: "parent-data-source-id", name: "Items" }],
+          };
+        },
+      },
+    };
+
+    const relationSchema: InferredNotionSchema = {
+      titlePropertyName: "Name",
+      properties: [
+        {
+          name: "items",
+          notionType: "relation",
+          relationMeta: {
+            kind: "nested_array",
+            entryProperties: [
+              { name: "label", notionType: "rich_text" },
+              { name: "amount", notionType: "number" },
+            ],
+          },
+        },
+      ],
+    };
+
+    const result = await createDatabaseFromSchema(notion as never, {
+      pageId: "parent-page-id",
+      databaseTitle: "Items",
+      schema: relationSchema,
+    });
+
+    assert.equal(createCalls.length, 2);
+    assert.deepEqual(createCalls[0], {
+      parent: { type: "page_id", page_id: "parent-page-id" },
+      title: [{ type: "text", text: { content: "Items - items" } }],
+      initial_data_source: {
+        properties: {
+          Name: { title: {} },
+          label: { rich_text: {} },
+          amount: { number: {} },
+        },
+      },
+    });
+    assert.deepEqual(createCalls[1], {
+      parent: { type: "page_id", page_id: "parent-page-id" },
+      title: [{ type: "text", text: { content: "Items" } }],
+      initial_data_source: {
+        properties: {
+          Name: { title: {} },
+          items: {
+            relation: {
+              data_source_id: "related-data-source-id",
+              type: "single_property",
+              single_property: {},
+            },
+          },
+        },
+      },
+    });
+    assert.equal(result.properties[0]?.relatedDataSourceId, "related-data-source-id");
   });
 });
 
@@ -272,5 +504,230 @@ describe("insertRecords", () => {
     });
 
     assert.equal(result.insertedCount, 0);
+  });
+
+  const relationProperties = [
+    {
+      name: "effects",
+      notionType: "relation" as const,
+      relationMeta: { kind: "scalar_array", valueType: "number" } as const,
+      relatedDataSourceId: "related-data-source-id",
+    },
+  ];
+
+  it("creates child pages and links scalar_array relation on parent", async () => {
+    const createdPages: unknown[] = [];
+    let pageIndex = 0;
+
+    const notion = {
+      pages: {
+        create: async (args: unknown) => {
+          createdPages.push(args);
+          pageIndex += 1;
+          return { id: `page-${pageIndex}` };
+        },
+      },
+    };
+
+    const result = await insertRecords(notion as never, {
+      dataSourceId: "parent-data-source-id",
+      titlePropertyName: "Name",
+      properties: relationProperties,
+      records: [
+        record("Sword", {
+          effects: [10, 20],
+        }),
+      ],
+    });
+
+    assert.equal(result.insertedCount, 1);
+    assert.equal(createdPages.length, 3);
+    assert.deepEqual(createdPages[0], {
+      parent: {
+        type: "data_source_id",
+        data_source_id: "related-data-source-id",
+      },
+      properties: {
+        Name: {
+          title: [{ type: "text", text: { content: "1" } }],
+        },
+        Value: { number: 10 },
+      },
+    });
+    assert.deepEqual(createdPages[1], {
+      parent: {
+        type: "data_source_id",
+        data_source_id: "related-data-source-id",
+      },
+      properties: {
+        Name: {
+          title: [{ type: "text", text: { content: "2" } }],
+        },
+        Value: { number: 20 },
+      },
+    });
+    assert.deepEqual(createdPages[2], {
+      parent: {
+        type: "data_source_id",
+        data_source_id: "parent-data-source-id",
+      },
+      properties: {
+        Name: {
+          title: [{ type: "text", text: { content: "Sword" } }],
+        },
+        effects: {
+          relation: [{ id: "page-1" }, { id: "page-2" }],
+        },
+      },
+    });
+  });
+
+  it("creates child pages and links nested_array relation on parent", async () => {
+    const createdPages: unknown[] = [];
+    let pageIndex = 0;
+
+    const notion = {
+      pages: {
+        create: async (args: unknown) => {
+          createdPages.push(args);
+          pageIndex += 1;
+          return { id: `page-${pageIndex}` };
+        },
+      },
+    };
+
+    const nestedRelationProperties = [
+      {
+        name: "items",
+        notionType: "relation" as const,
+        relationMeta: {
+          kind: "nested_array",
+          entryProperties: [
+            { name: "label", notionType: "rich_text" },
+            { name: "amount", notionType: "number" },
+          ],
+        } as const,
+        relatedDataSourceId: "related-data-source-id",
+      },
+    ];
+
+    const result = await insertRecords(notion as never, {
+      dataSourceId: "parent-data-source-id",
+      titlePropertyName: "Name",
+      properties: nestedRelationProperties,
+      records: [
+        record("Chest", {
+          items: [
+            { label: "Gold", amount: 100 },
+            { label: "Silver", amount: 50 },
+          ],
+        }),
+      ],
+    });
+
+    assert.equal(result.insertedCount, 1);
+    assert.equal(createdPages.length, 3);
+    assert.deepEqual(createdPages[0], {
+      parent: {
+        type: "data_source_id",
+        data_source_id: "related-data-source-id",
+      },
+      properties: {
+        Name: {
+          title: [{ type: "text", text: { content: "1" } }],
+        },
+        label: {
+          rich_text: [{ type: "text", text: { content: "Gold" } }],
+        },
+        amount: { number: 100 },
+      },
+    });
+    assert.deepEqual(createdPages[1], {
+      parent: {
+        type: "data_source_id",
+        data_source_id: "related-data-source-id",
+      },
+      properties: {
+        Name: {
+          title: [{ type: "text", text: { content: "2" } }],
+        },
+        label: {
+          rich_text: [{ type: "text", text: { content: "Silver" } }],
+        },
+        amount: { number: 50 },
+      },
+    });
+    assert.deepEqual(createdPages[2], {
+      parent: {
+        type: "data_source_id",
+        data_source_id: "parent-data-source-id",
+      },
+      properties: {
+        Name: {
+          title: [{ type: "text", text: { content: "Chest" } }],
+        },
+        items: {
+          relation: [{ id: "page-1" }, { id: "page-2" }],
+        },
+      },
+    });
+  });
+
+  it("throws when relation value is a string array", async () => {
+    const notion = {
+      pages: {
+        create: async () => {
+          throw new Error("pages.create should not be called");
+        },
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        insertRecords(notion as never, {
+          dataSourceId: "parent-data-source-id",
+          titlePropertyName: "Name",
+          properties: relationProperties,
+          records: [
+            record("Sword", {
+              effects: ["Fire", "Ice"],
+            }),
+          ],
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(error.message, /requires a Luau array value/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when relation value is not an array", async () => {
+    const notion = {
+      pages: {
+        create: async () => {
+          throw new Error("pages.create should not be called");
+        },
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        insertRecords(notion as never, {
+          dataSourceId: "parent-data-source-id",
+          titlePropertyName: "Name",
+          properties: relationProperties,
+          records: [
+            record("Sword", {
+              effects: 10,
+            }),
+          ],
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(error.message, /requires a Luau array value/);
+        return true;
+      },
+    );
   });
 });

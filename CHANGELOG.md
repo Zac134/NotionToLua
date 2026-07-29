@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Array relations (`BaseName [Array]`)** — Relation columns with numeric related Titles are sorted and emitted as dense Luau arrays. Push creates a related database and renumbers titles to `"1".."N"`. See [docs/nested-relations.md](./docs/nested-relations.md).
+- **`omit_array_index`** — When all top-level record Titles are numeric and form a dense `1..N` sequence, generated modules can omit `[n]` keys and emit a keyless Luau array with `export type Module = { Entry }`. Non-dense or non-1-based sequences fall back to keyed `[n]` output with no warning.
+
+### Changed
+
+- **`ntn-lua.toml` section layout** — `ntn-lua init` now writes grouped sections: `[source]` (`database_id`, `code_block_parent_page_id`), `[paths]` (`output`), and `[emit]` (`format`, `export_types`, `empty_value`, `empty_relation`, `omit_array_index`). Flat root keys remain supported for backward compatibility; mixing flat keys with section tables is rejected.
+- **`code_block_parent_page_id`** — Replaces `page_id` in the init template and sectioned config. Flat `page_id` at the root is still accepted; setting both page keys is an error.
+- **`ntn-lua init` template** — Generates a template with default values instead of a commented-only template.
+- **Numeric record Titles** — Top-level Titles that match the same numeric rules as array relations (`0`, `1`, `12` OK; `01`, negatives, and decimals NG) are always emitted as numeric Luau indexes (`[1]`, not `["1"]`) in module values. Module types use `[number]: Entry` instead of literal `[1]:` keys. When every record Title is numeric, records are sorted numerically.
+- **Typed Rich Text columns** — Notion Rich Text properties named `BaseName [TypeName]` (for example `Position [Vector3]`) are converted to Roblox values on pull and serialized back on push. Supported types: Vector2, Vector3, Color3, UDim, UDim2, Rect, NumberRange, CFrame. Invalid cells fall back to string with a warning. See [docs/typed-rich-text.md](./docs/typed-rich-text.md).
+
+### Fixed
+
+- macOS release binaries are ad-hoc signed after compile so Gatekeeper accepts them on Apple Silicon and Intel Macs.
+
 ## [0.4.0] - 2026-07-26
 
 ### Added

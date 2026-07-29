@@ -29,6 +29,84 @@ return testModule
     assert.deepEqual(parsed.records, []);
   });
 
+  it("parses array-of-records modules using 1-based index keys", () => {
+    const source = `local Data = {
+    {
+        ItemID = "C0001",
+        ItemName = "Alpha",
+        Rare = 1,
+    },
+    {
+        ItemID = "C0002",
+        ItemName = "Beta",
+        Rare = 2,
+    },
+}
+return Data
+`;
+
+    const parsed = parseLuauModule(source);
+
+    assert.equal(parsed.moduleName, "Data");
+    assert.deepEqual(parsed.records, [
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: {
+          ItemID: "C0001",
+          ItemName: "Alpha",
+          Rare: 1,
+        },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: {
+          ItemID: "C0002",
+          ItemName: "Beta",
+          Rare: 2,
+        },
+      },
+    ]);
+  });
+
+  it("parses array-of-records modules without ItemID using 1-based index keys", () => {
+    const source = `local Data = {
+    {
+        ItemName = "Alpha",
+        Rare = 1,
+    },
+    {
+        ItemName = "Beta",
+        Rare = 2,
+    },
+}
+return Data
+`;
+
+    const parsed = parseLuauModule(source);
+
+    assert.equal(parsed.moduleName, "Data");
+    assert.deepEqual(parsed.records, [
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: {
+          ItemName: "Alpha",
+          Rare: 1,
+        },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: {
+          ItemName: "Beta",
+          Rare: 2,
+        },
+      },
+    ]);
+  });
+
   it("parses multiple records with primitive properties", () => {
     const source = `local weapons = {
     Sword = {
@@ -85,6 +163,38 @@ return testModule
         keyFormat: "bracket",
         properties: {
           label: "test",
+        },
+      },
+    ]);
+  });
+
+  it("parses numeric bracket record keys", () => {
+    const source = `local testModule = {
+    [1] = {
+        label = "first",
+    },
+    [10] = {
+        label = "tenth",
+    },
+}
+return testModule
+`;
+
+    const parsed = parseLuauModule(source);
+
+    assert.deepEqual(parsed.records, [
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: {
+          label: "first",
+        },
+      },
+      {
+        key: "10",
+        keyFormat: "numeric",
+        properties: {
+          label: "tenth",
         },
       },
     ]);
@@ -204,6 +314,40 @@ return testModule
       moduleName: "testModule",
       properties: sampleProperties,
       exportTypes: false,
+    });
+
+    const parsed = parseLuauModule(source);
+
+    assert.equal(parsed.moduleName, "testModule");
+    assert.deepEqual(parsed.records, records);
+  });
+
+  it("parses generator output with omitArrayIndex", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: {
+          count: 1,
+        },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: {
+          count: 2,
+        },
+      },
+    ];
+    const source = generateModuleScript(records, {
+      moduleName: "testModule",
+      properties: sampleProperties,
+      exportTypes: true,
+      outputOptions: {
+        emptyValue: "omit",
+        emptyRelation: "omit",
+        omitArrayIndex: true,
+      },
     });
 
     const parsed = parseLuauModule(source);

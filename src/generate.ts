@@ -8,6 +8,7 @@ import {
   fetchAllDatabaseRecords,
   pagesToLuauRecords,
   resolveDataSource,
+  type TypedConversionWarning,
 } from "./notion.js";
 import {
   createRelationResolutionContext,
@@ -24,6 +25,7 @@ export type GenerateLuauCodeOptions = {
   dataSource?: DataSourceObjectResponse;
   exportTypes?: boolean;
   config?: ResolvedUserConfig;
+  onTypedFallback?: (warning: TypedConversionWarning) => void;
 };
 
 export type GenerateLuauCodeResult = {
@@ -42,13 +44,16 @@ export async function generateLuauCode(
     exportTypes: true,
     emptyValue: "omit",
     emptyRelation: "omit",
+    omitArrayIndex: false,
   };
   const dataSource =
     options.dataSource ?? (await resolveDataSource(notion, databaseId));
   assertTitlePropertyExists(dataSource);
 
   const pages = await fetchAllDatabaseRecords(notion, dataSource.id);
-  const records = pagesToLuauRecords(pages, dataSource);
+  const records = pagesToLuauRecords(pages, dataSource, {
+    onTypedFallback: options.onTypedFallback,
+  });
   const relationContext = createRelationResolutionContext(
     notion,
     config,
@@ -67,6 +72,7 @@ export async function generateLuauCode(
     outputOptions: {
       emptyValue: config.emptyValue,
       emptyRelation: config.emptyRelation,
+      omitArrayIndex: config.omitArrayIndex,
     },
   });
 

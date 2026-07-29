@@ -66,7 +66,20 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 BINARY_PATH="$WORK_DIR/$BIN_NAME"
 
 echo "Compiling src/cli.ts for $BUN_TARGET ..."
-bun build src/cli.ts --compile --target="$BUN_TARGET" --outfile="$BINARY_PATH"
+if [[ "$BUN_TARGET" == bun-darwin-* ]]; then
+  if ! command -v codesign >/dev/null 2>&1; then
+    echo "error: codesign is required to sign macOS release binaries" >&2
+    exit 1
+  fi
+  BUN_NO_CODESIGN_MACHO_BINARY=1 bun build src/cli.ts --compile --target="$BUN_TARGET" --outfile="$BINARY_PATH"
+  codesign --force --sign - "$BINARY_PATH"
+  if ! codesign --verify "$BINARY_PATH"; then
+    echo "error: codesign verification failed for $BINARY_PATH" >&2
+    exit 1
+  fi
+else
+  bun build src/cli.ts --compile --target="$BUN_TARGET" --outfile="$BINARY_PATH"
+fi
 
 if [[ "$BIN_NAME" != *.exe ]]; then
   chmod +x "$BINARY_PATH"

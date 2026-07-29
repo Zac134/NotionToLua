@@ -7,6 +7,7 @@ import type {
 
 import { NotionToLuaError } from "../src/errors.js";
 import {
+  collectTypedConversionWarnings,
   convertPropertyValue,
   extractTitleKey,
   pagesToLuauRecords,
@@ -311,6 +312,56 @@ describe("extractTitleKey", () => {
   });
 });
 
+describe("collectTypedConversionWarnings", () => {
+  it("returns null when robloxType is absent", () => {
+    assert.equal(
+      collectTypedConversionWarnings(
+        "ItemA",
+        { name: "Description", notionType: "rich_text" },
+        "anything",
+      ),
+      null,
+    );
+  });
+
+  it("returns null when typed value parses successfully", () => {
+    assert.equal(
+      collectTypedConversionWarnings(
+        "ItemA",
+        {
+          name: "Position",
+          notionType: "rich_text",
+          robloxType: "Vector3",
+          notionPropertyName: "Position [Vector3]",
+        },
+        "1, 2, 3",
+      ),
+      null,
+    );
+  });
+
+  it("returns a warning object when typed value fails to parse", () => {
+    assert.deepEqual(
+      collectTypedConversionWarnings(
+        "ItemA",
+        {
+          name: "Position",
+          notionType: "rich_text",
+          robloxType: "Vector3",
+          notionPropertyName: "Position [Vector3]",
+        },
+        "not-a-vector",
+      ),
+      {
+        recordKey: "ItemA",
+        propertyName: "Position",
+        robloxType: "Vector3",
+        rawValue: "not-a-vector",
+      },
+    );
+  });
+});
+
 describe("pagesToLuauRecords", () => {
   it("converts supported properties and skips unsupported ones", () => {
     const dataSource = createDataSource({
@@ -415,6 +466,98 @@ describe("pagesToLuauRecords", () => {
     assert.equal(records.length, 1);
     assert.equal(records[0]?.key, "ItemC");
     assert.deepEqual(records[0]?.properties, { 数値: 5 });
+  });
+
+  it("uses numeric keyFormat for numeric titles", () => {
+    const dataSource = createDataSource({});
+    const pages = [createPage("12", {}), createPage("1", {})];
+
+    const records = pagesToLuauRecords(pages, dataSource);
+
+    assert.deepEqual(
+      records.map((record) => ({
+        key: record.key,
+        keyFormat: record.keyFormat,
+      })),
+      [
+        { key: "12", keyFormat: "numeric" },
+        { key: "1", keyFormat: "numeric" },
+      ],
+    );
+  });
+
+  it("calls onTypedFallback for invalid typed rich_text values", () => {
+    const dataSource = createDataSource({
+      "Position [Vector3]": {
+        id: "position",
+        name: "Position [Vector3]",
+        type: "rich_text",
+        rich_text: {},
+        description: null,
+      },
+    });
+    const pages = [
+      createPage("ItemA", {
+        "Position [Vector3]": {
+          id: "position",
+          type: "rich_text",
+          rich_text: createRichText("not-a-vector"),
+        },
+      }),
+    ];
+    const warnings: Array<{
+      recordKey: string;
+      propertyName: string;
+      robloxType: string;
+      rawValue: string;
+    }> = [];
+
+    const records = pagesToLuauRecords(pages, dataSource, {
+      onTypedFallback: (warning) => {
+        warnings.push(warning);
+      },
+    });
+
+    assert.equal(warnings.length, 1);
+    assert.deepEqual(warnings[0], {
+      recordKey: "ItemA",
+      propertyName: "Position",
+      robloxType: "Vector3",
+      rawValue: "not-a-vector",
+    });
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.properties.Position, "not-a-vector");
+  });
+
+  it("stores TypedRobloxValue for valid typed rich_text values", () => {
+    const dataSource = createDataSource({
+      "Position [Vector3]": {
+        id: "position",
+        name: "Position [Vector3]",
+        type: "rich_text",
+        rich_text: {},
+        description: null,
+      },
+    });
+    const pages = [
+      createPage("ItemA", {
+        "Position [Vector3]": {
+          id: "position",
+          type: "rich_text",
+          rich_text: createRichText("1, 2, 3"),
+        },
+      }),
+    ];
+
+    const records = pagesToLuauRecords(pages, dataSource);
+
+    assert.equal(records.length, 1);
+    assert.deepEqual(records[0]?.properties.Position, {
+      kind: "Vector3",
+      x: 1,
+      y: 2,
+      z: 3,
+    });
   });
 });
 

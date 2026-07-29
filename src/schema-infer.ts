@@ -1,12 +1,22 @@
 import { NotionToLuaError } from "./errors.js";
+import { formatArrayRelationPropertyName } from "./relation-array.js";
+import {
+  inferRelationArrayMeta,
+} from "./relation-array-infer.js";
 import type {
   InferredNotionSchema,
   InferredNotionType,
   InferredProperty,
   LuauRecord,
   LuauValue,
+  RobloxTypeName,
 } from "./types.js";
-import { isLuauTable } from "./types.js";
+import {
+  isLuauTable,
+  isStringArray,
+  isTypedRobloxValue,
+} from "./types.js";
+import { formatTypedPropertyName } from "./typed-rich-text.js";
 
 function sortPropertyNames(names: string[]): string[] {
   return [...names].sort((left, right) => left.localeCompare(right, "en"));
@@ -34,8 +44,16 @@ function classifyValue(
     return "rich_text";
   }
 
+  if (isTypedRobloxValue(value)) {
+    return "rich_text";
+  }
+
   if (Array.isArray(value)) {
-    return "multi_select";
+    if (isStringArray(value)) {
+      return "multi_select";
+    }
+
+    return "relation";
   }
 
   if (isLuauTable(value)) {
@@ -85,6 +103,7 @@ function inferProperty(
   }
 
   let notionType: InferredNotionType | undefined;
+  let robloxType: RobloxTypeName | undefined;
   const multiSelectOptions = new Set<string>();
 
   for (const value of nonNullValues) {
@@ -98,7 +117,19 @@ function inferProperty(
       );
     }
 
-    if (classified === "multi_select" && Array.isArray(value)) {
+    if (isTypedRobloxValue(value)) {
+      if (robloxType === undefined) {
+        robloxType = value.kind;
+      } else if (robloxType !== value.kind) {
+        throw new NotionToLuaError(
+          `Property "${propertyName}" has mixed Roblox value types across records.`,
+        );
+      }
+    } else if (robloxType !== undefined && classified === "rich_text") {
+      // Allow string fallback alongside typed values for the same property.
+    }
+
+    if (classified === "multi_select" && isStringArray(value)) {
       for (const option of value) {
         multiSelectOptions.add(option);
       }
@@ -109,6 +140,19 @@ function inferProperty(
     name: propertyName,
     notionType: notionType!,
   };
+
+  if (notionType === "relation") {
+    property.relationMeta = inferRelationArrayMeta(propertyName, records);
+    property.notionPropertyName = formatArrayRelationPropertyName(propertyName);
+  }
+
+  if (robloxType) {
+    property.robloxType = robloxType;
+    property.notionPropertyName = formatTypedPropertyName(
+      propertyName,
+      robloxType,
+    );
+  }
 
   if (notionType === "multi_select") {
     property.multiSelectOptions = sortPropertyNames([...multiSelectOptions]);

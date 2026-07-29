@@ -41,18 +41,21 @@ export async function pushLuauFile(
   const { moduleName, records } = parseLuauModule(source);
   const schema = inferNotionSchema(records);
 
-  const { databaseId, dataSourceId } = await createDatabaseFromSchema(notion, {
-    pageId: args.pageId,
-    databaseTitle: moduleName,
-    schema,
-  });
+  const { databaseId, dataSourceId, properties } = await createDatabaseFromSchema(
+    notion,
+    {
+      pageId: args.pageId,
+      databaseTitle: moduleName,
+      schema,
+    },
+  );
 
   let insertedCount = 0;
   try {
     ({ insertedCount } = await insertRecords(notion, {
       dataSourceId,
       titlePropertyName: schema.titlePropertyName,
-      properties: schema.properties,
+      properties,
       records,
     }));
   } catch (error) {

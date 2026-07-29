@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { NotionToLuaError } from "../src/errors.js";
+import { formatArrayRelationPropertyName } from "../src/relation-array.js";
 import { inferNotionSchema } from "../src/schema-infer.js";
 import type { LuauRecord } from "../src/types.js";
 
@@ -183,6 +184,80 @@ describe("inferNotionSchema", () => {
       (error: unknown) => {
         assert.ok(error instanceof NotionToLuaError);
         assert.match(error.message, /Record key is empty/);
+        return true;
+      },
+    );
+  });
+
+  it("infers scalar array relations with array notation property names", () => {
+    const schema = inferNotionSchema([
+      record("A", { items: [1, 2] }),
+      record("B", { items: [3] }),
+    ]);
+
+    assert.deepEqual(schema.properties, [
+      {
+        name: "items",
+        notionType: "relation",
+        notionPropertyName: formatArrayRelationPropertyName("items"),
+        relationMeta: { kind: "scalar_array", valueType: "number" },
+      },
+    ]);
+  });
+
+  it("infers nested array relations", () => {
+    const schema = inferNotionSchema([
+      record("A", { items: [{ hp: 10 }] }),
+      record("B", { items: [{ hp: 20 }, { hp: 5 }] }),
+    ]);
+
+    assert.deepEqual(schema.properties, [
+      {
+        name: "items",
+        notionType: "relation",
+        notionPropertyName: formatArrayRelationPropertyName("items"),
+        relationMeta: {
+          kind: "nested_array",
+          entryProperties: [{ name: "hp", notionType: "number" }],
+        },
+      },
+    ]);
+  });
+
+  it("infers typed Roblox values as rich_text with typed property names", () => {
+    const schema = inferNotionSchema([
+      record("Spawn", {
+        pos: { kind: "Vector3", x: 1, y: 2, z: 3 },
+      }),
+    ]);
+
+    assert.deepEqual(schema.properties, [
+      {
+        name: "pos",
+        notionType: "rich_text",
+        robloxType: "Vector3",
+        notionPropertyName: "pos [Vector3]",
+      },
+    ]);
+  });
+
+  it("throws when a property has mixed Roblox value types across records", () => {
+    assert.throws(
+      () =>
+        inferNotionSchema([
+          record("A", {
+            pos: { kind: "Vector3", x: 1, y: 2, z: 3 },
+          }),
+          record("B", {
+            pos: { kind: "Color3", r: 255, g: 128, b: 0 },
+          }),
+        ]),
+      (error: unknown) => {
+        assert.ok(error instanceof NotionToLuaError);
+        assert.match(
+          error.message,
+          /Property "pos" has mixed Roblox value types across records/,
+        );
         return true;
       },
     );

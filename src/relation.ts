@@ -7,6 +7,7 @@ import type {
 import type { ResolvedUserConfig } from "./config.js";
 import { NotionToLuaError } from "./errors.js";
 import {
+  convertPagePropertyToLuauValue,
   convertPropertyValue,
   extractTitleKey,
   listExportableProperties,
@@ -19,7 +20,13 @@ import type {
   LuauTable,
   LuauValue,
 } from "./types.js";
-import { resolveMissingValue } from "./types.js";
+import { isLuauTable, resolveMissingValue } from "./types.js";
+import {
+  formatArrayRelationPropertyName,
+  parseArrayRelationPropertyName,
+  parseNumericRelationTitle,
+  sortRelatedEntriesByNumericTitle,
+} from "./relation-array.js";
 
 type NotionClient = Pick<
   Client,
@@ -95,27 +102,24 @@ function convertFlatProperties(
   page: PageObjectResponse,
   dataSource: DataSourceObjectResponse,
 ): Record<string, LuauValue> {
-  const titlePropertyName = resolveTitlePropertyName(dataSource);
   const properties: Record<string, LuauValue> = {};
 
-  for (const [propertyName, dataSourceProperty] of Object.entries(
-    dataSource.properties,
-  )) {
-    if (propertyName === titlePropertyName) {
-      continue;
-    }
+  for (const exportableProperty of listExportableProperties(dataSource)) {
+    const notionPropertyName =
+      exportableProperty.notionPropertyName ?? exportableProperty.name;
+    const pageProperty = page.properties[notionPropertyName];
+    const dataSourceProperty = dataSource.properties[notionPropertyName];
 
-    const pageProperty = page.properties[propertyName];
-    if (!pageProperty || pageProperty.type !== dataSourceProperty.type) {
-      continue;
-    }
-
-    const converted = convertPropertyValue(pageProperty);
+    const converted = convertPagePropertyToLuauValue(
+      pageProperty,
+      dataSourceProperty,
+      exportableProperty,
+    );
     if (converted === undefined) {
       continue;
     }
 
-    properties[propertyName] = converted;
+    properties[exportableProperty.name] = converted;
   }
 
   return properties;
@@ -160,29 +164,22 @@ function buildRelatedRecordTable(
   dataSource: DataSourceObjectResponse,
   emptyValue: ResolvedUserConfig["emptyValue"],
 ): LuauTable {
-  const titlePropertyName = resolveTitlePropertyName(dataSource);
   const table: LuauTable = {};
 
-  for (const [propertyName, dataSourceProperty] of Object.entries(
-    dataSource.properties,
-  )) {
-    if (propertyName === titlePropertyName) {
+  for (const exportableProperty of listExportableProperties(dataSource)) {
+    const notionPropertyName =
+      exportableProperty.notionPropertyName ?? exportableProperty.name;
+    const dataSourceProperty = dataSource.properties[notionPropertyName];
+    if (!dataSourceProperty) {
       continue;
     }
 
-    const exportable = listExportableProperties(dataSource).some(
-      (property) => property.name === propertyName,
+    const pageProperty = page.properties[notionPropertyName];
+    const converted = convertPagePropertyToLuauValue(
+      pageProperty,
+      dataSourceProperty,
+      exportableProperty,
     );
-    if (!exportable) {
-      continue;
-    }
-
-    const pageProperty = page.properties[propertyName];
-    if (!pageProperty || pageProperty.type !== dataSourceProperty.type) {
-      continue;
-    }
-
-    const converted = convertPropertyValue(pageProperty);
     if (converted === undefined) {
       continue;
     }
@@ -193,14 +190,152 @@ function buildRelatedRecordTable(
         continue;
       }
 
-      table[propertyName] = resolved;
+      table[exportableProperty.name] = resolved;
       continue;
     }
 
-    table[propertyName] = converted;
+    table[exportableProperty.name] = converted;
   }
 
   return table;
+}
+
+function buildScalarArrayMeta(
+  exportableProperties: ExportableProperty[],
+): ExportableProperty["relationMeta"] {
+  const property = exportableProperties[0];
+  return {
+    kind: "scalar_array",
+    valueType: notionTypeToLuauType(property?.notionType ?? "string"),
+  };
+}
+
+function buildNestedArrayMeta(
+  exportableProperties: ExportableProperty[],
+): ExportableProperty["relationMeta"] {
+  return {
+    kind: "nested_array",
+    entryProperties: exportableProperties,
+  };
+}
+
+async function embedRelationArray(
+  context: RelationResolutionContext,
+  relationPropertyName: string,
+  relationSchema: RelationPropertySchema,
+  relatedPageIds: string[],
+  visitingPageIds: Set<string>,
+  depth: number,
+): Promise<{ value: LuauValue[]; meta: ExportableProperty["relationMeta"] }> {
+  if (depth > DEFAULT_RELATION_MAX_DEPTH) {
+    throw new NotionToLuaError(
+      `Relation property "${relationPropertyName}" exceeds max depth (${DEFAULT_RELATION_MAX_DEPTH}).`,
+    );
+  }
+
+  if (relatedPageIds.length === 0) {
+    return {
+      value: [],
+      meta: { kind: "scalar_array", valueType: "string" },
+    };
+  }
+
+  const relatedDataSource = await fetchDataSourceForRelation(
+    context,
+    relationSchema,
+  );
+  const relatedTitleProperty = resolveTitlePropertyName(relatedDataSource);
+  const relatedExportableProperties = listExportableProperties(relatedDataSource);
+  const relatedExportableNames = relatedExportableProperties.map(
+    (property) => property.name,
+  );
+  const { emptyValue } = context.config;
+
+  const entries: Array<{ sortKey: number; title: string; value: LuauValue }> =
+    [];
+  const seenSortKeys = new Map<number, number>();
+
+  for (const relatedPageId of relatedPageIds) {
+    if (visitingPageIds.has(relatedPageId)) {
+      throw new NotionToLuaError(
+        `Circular relation detected while embedding "${relationPropertyName}".`,
+      );
+    }
+
+    visitingPageIds.add(relatedPageId);
+    const relatedPage = await fetchPage(context, relatedPageId);
+    const relatedTitle = extractTitleKey(relatedPage, relatedTitleProperty);
+    const sortKey = parseNumericRelationTitle(relatedTitle);
+    const duplicateCount = (seenSortKeys.get(sortKey) ?? 0) + 1;
+    seenSortKeys.set(sortKey, duplicateCount);
+
+    if (duplicateCount > 1) {
+      throw new NotionToLuaError(
+        `Duplicate related title "${relatedTitle}" in relation property "${relationPropertyName}".`,
+      );
+    }
+
+    let value: LuauValue;
+
+    if (relatedExportableNames.length === 1) {
+      const solePropertyName = relatedExportableNames[0];
+      const soleProperty = relatedExportableProperties[0];
+      const soleValue = convertFlatProperties(relatedPage, relatedDataSource)[
+        solePropertyName
+      ] ?? null;
+
+      if (soleValue === null) {
+        const resolved = resolveMissingValue(
+          emptyValue,
+          soleProperty?.notionType ?? "string",
+        );
+        if (resolved === "omit") {
+          visitingPageIds.delete(relatedPageId);
+          continue;
+        }
+
+        value = resolved;
+      } else {
+        value = soleValue;
+      }
+    } else if (relatedExportableNames.length === 0) {
+      value = {};
+    } else {
+      value = buildRelatedRecordTable(
+        relatedPage,
+        relatedDataSource,
+        emptyValue,
+      );
+    }
+
+    entries.push({ sortKey, title: relatedTitle, value });
+    visitingPageIds.delete(relatedPageId);
+  }
+
+  const meta =
+    relatedExportableNames.length === 1
+      ? buildScalarArrayMeta(relatedExportableProperties)
+      : buildNestedArrayMeta(relatedExportableProperties);
+
+  return {
+    value: sortRelatedEntriesByNumericTitle(entries).map((entry) => entry.value),
+    meta,
+  };
+}
+
+function applyEmptyRelationArray(
+  values: LuauValue[],
+  emptyRelation: ResolvedUserConfig["emptyRelation"],
+): LuauValue | undefined {
+  if (values.length === 0) {
+    if (emptyRelation === "empty_table") {
+      return [];
+    }
+
+    return undefined;
+  }
+
+  return values;
 }
 
 async function embedRelationDictionary(
@@ -365,6 +500,35 @@ export async function resolveEmbeddedRelationsForRecords(
 
       const relatedPageIds = pageProperty.relation.map((item) => item.id);
       const visitingPageIds = new Set<string>([page.id]);
+      const arrayRelation = parseArrayRelationPropertyName(relationPropertyName);
+      const propertyKey = arrayRelation?.baseName ?? relationPropertyName;
+
+      if (arrayRelation) {
+        const { value: arrayValue, meta } = await embedRelationArray(
+          context,
+          relationPropertyName,
+          schemaProperty,
+          relatedPageIds,
+          visitingPageIds,
+          1,
+        );
+
+        relationMetaByProperty.set(propertyKey, meta);
+
+        const resolvedValue = applyEmptyRelationArray(
+          arrayValue,
+          context.config.emptyRelation,
+        );
+
+        if (resolvedValue === undefined) {
+          delete record.properties[propertyKey];
+        } else {
+          record.properties[propertyKey] = resolvedValue;
+        }
+
+        continue;
+      }
+
       const { value: dictionary, meta } = await embedRelationDictionary(
         context,
         relationPropertyName,
@@ -374,7 +538,7 @@ export async function resolveEmbeddedRelationsForRecords(
         1,
       );
 
-      relationMetaByProperty.set(relationPropertyName, meta);
+      relationMetaByProperty.set(propertyKey, meta);
 
       const resolvedValue = applyEmptyRelation(
         dictionary,
@@ -382,9 +546,9 @@ export async function resolveEmbeddedRelationsForRecords(
       );
 
       if (resolvedValue === undefined) {
-        delete record.properties[relationPropertyName];
+        delete record.properties[propertyKey];
       } else {
-        record.properties[relationPropertyName] = resolvedValue;
+        record.properties[propertyKey] = resolvedValue;
       }
     }
   }
@@ -393,11 +557,19 @@ export async function resolveEmbeddedRelationsForRecords(
 
   return [
     ...baseProperties,
-    ...relationPropertyNames.map((propertyName) => ({
-      name: propertyName,
-      notionType: "relation",
-      relationMeta: relationMetaByProperty.get(propertyName),
-    })),
+    ...relationPropertyNames.map((propertyName) => {
+      const arrayRelation = parseArrayRelationPropertyName(propertyName);
+      const name = arrayRelation?.baseName ?? propertyName;
+
+      return {
+        name,
+        notionType: "relation",
+        notionPropertyName: arrayRelation
+          ? formatArrayRelationPropertyName(name)
+          : propertyName,
+        relationMeta: relationMetaByProperty.get(name),
+      };
+    }),
   ];
 }
 

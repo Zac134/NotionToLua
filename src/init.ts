@@ -3,39 +3,22 @@ import { resolve } from "node:path";
 
 import { NotionToLuaError } from "./errors.js";
 
-export const NTN_LUA_TOML_TEMPLATE = `# ntn-lua configuration (run ntn-lua from the directory that contains this file).
-#
-# CLI flags override database_id, page_id, and output when provided.
-# format and export_types are configured here only (both default to true).
+export const NTN_LUA_TOML_TEMPLATE = `# ntn-lua — run from the directory that contains this file.
+# CLI overrides: -d database_id, -p page, -o output.
 
-# Database or data source ID (required unless passed with -d or as a positional argument)
+[source]
 database_id = "your-database-or-data-source-id"
+code_block_parent_page_id = "your-page-id"
 
-# Notion page ID for code block mode (ignored when output is set)
-# page_id = "your-page-id"
-
-# Output directory or .lua / .luau file path (file mode; nothing is written to Notion)
+[paths]
 output = "src/shared/Config"
 
-# Run StyLua formatting after generation (default: true)
-# format = true
-
-# Emit Luau export type definitions (default: true)
-# export_types = true
-
-# How to emit null / missing values (default: omit)
-# omit          — skip the key entirely
-# nil           — include the key with value nil
-# empty_string  — include the key with "" for string-like properties only
-# empty_value = "omit"
-
-# How to emit empty Relation columns (default: omit)
-# omit         — skip the property when no related records are linked
-# empty_table  — emit an empty table, e.g. Effects = {}
-# empty_relation = "omit"
-
-# Relation columns are embedded automatically as Luau dictionaries.
-# See docs/nested-relations.md for database design examples.
+[emit]
+format = true
+export_types = true
+empty_value = "omit"         # omit | nil | empty_string
+empty_relation = "omit"      # omit | empty_table
+omit_array_index = false
 `;
 
 export function initConfig(cwd = process.cwd()): string {

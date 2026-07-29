@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { generateModuleScript } from "../src/generator.js";
-import type { ExportableProperty, LuauRecord } from "../src/types.js";
+import type { ExportableProperty, LuauRecord, OutputOptions } from "../src/types.js";
 
 const sampleProperties: ExportableProperty[] = [
   { name: "count", notionType: "number" },
@@ -14,8 +14,20 @@ function generate(
   moduleName = "testModule",
   properties: ExportableProperty[] = sampleProperties,
   exportTypes = true,
+  outputOptions?: Partial<OutputOptions>,
 ): string {
-  return generateModuleScript(records, { moduleName, properties, exportTypes });
+  return generateModuleScript(records, {
+    moduleName,
+    properties,
+    exportTypes,
+    outputOptions: outputOptions
+      ? {
+          emptyValue: "omit",
+          emptyRelation: "omit",
+          ...outputOptions,
+        }
+      : undefined,
+  });
 }
 
 describe("generateModuleScript", () => {
@@ -67,8 +79,8 @@ describe("generateModuleScript", () => {
 
     assert.match(output, /export type TestModuleEntry/);
     assert.match(output, /export type TestModule/);
-    assert.match(output, /local testModule: TestModule = \{/);
-    assert.match(output, /return testModule/);
+    assert.match(output, /export type TestModule = \{\n    ItemA: TestModuleEntry,\n\}\n\nlocal testModule: TestModule = \{/);
+    assert.match(output, /\},\n\}\n\nreturn testModule/);
   });
 
   it("uses 4-space indentation", () => {
@@ -225,5 +237,182 @@ describe("generateModuleScript", () => {
 
     assert.match(output, /\["my-prop"\]: string,/);
     assert.match(output, /\["my-prop"\] = "value",/);
+  });
+
+  it("sorts numeric record keys numerically and formats them with bracket indexes", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "10",
+        keyFormat: "numeric",
+        properties: { count: 10 },
+      },
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: { count: 1 },
+      },
+    ];
+
+    const output = generate(records);
+
+    assert.ok(output.indexOf("[1] = {") < output.indexOf("[10] = {"));
+    assert.match(output, /export type TestModule = \{ \[number\]: TestModuleEntry \}/);
+    assert.doesNotMatch(output, /\[1\]: TestModuleEntry,/);
+    assert.doesNotMatch(output, /\[10\]: TestModuleEntry,/);
+  });
+
+  it("keeps keyed numeric indexes when omitArrayIndex is false", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: { count: 1 },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: { count: 2 },
+      },
+      {
+        key: "3",
+        keyFormat: "numeric",
+        properties: { count: 3 },
+      },
+    ];
+
+    const output = generate(records, "testModule", sampleProperties, true, {
+      omitArrayIndex: false,
+    });
+
+    assert.match(output, /\[1\] = \{/);
+    assert.match(output, /\[2\] = \{/);
+    assert.match(output, /\[3\] = \{/);
+    assert.match(output, /export type TestModule = \{ \[number\]: TestModuleEntry \}/);
+    assert.doesNotMatch(output, /export type TestModule = \{ TestModuleEntry \}/);
+    assert.doesNotMatch(output, /\[1\]: TestModuleEntry,/);
+  });
+
+  it("emits keyless arrays and array module types when omitArrayIndex is true and keys are 1..N", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: { count: 1 },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: { count: 2 },
+      },
+      {
+        key: "3",
+        keyFormat: "numeric",
+        properties: { count: 3 },
+      },
+    ];
+
+    const output = generate(records, "testModule", sampleProperties, true, {
+      omitArrayIndex: true,
+    });
+
+    assert.match(output, /export type TestModule = \{ TestModuleEntry \}/);
+    assert.match(output, /local testModule: TestModule = \{\n    \{\n        count = 1,/);
+    assert.match(output, /count = 2,/);
+    assert.match(output, /count = 3,/);
+    assert.doesNotMatch(output, /\[1\] =/);
+    assert.doesNotMatch(output, /\[2\] =/);
+    assert.doesNotMatch(output, /\[3\] =/);
+  });
+
+  it("falls back to keyed numeric indexes when omitArrayIndex is true but keys are not dense 1..N", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: { count: 1 },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: { count: 2 },
+      },
+      {
+        key: "4",
+        keyFormat: "numeric",
+        properties: { count: 4 },
+      },
+    ];
+
+    const output = generate(records, "testModule", sampleProperties, true, {
+      omitArrayIndex: true,
+    });
+
+    assert.match(output, /\[1\] = \{/);
+    assert.match(output, /\[2\] = \{/);
+    assert.match(output, /\[4\] = \{/);
+    assert.match(output, /export type TestModule = \{ \[number\]: TestModuleEntry \}/);
+    assert.doesNotMatch(output, /export type TestModule = \{ TestModuleEntry \}/);
+    assert.doesNotMatch(output, /\[1\]: TestModuleEntry,/);
+  });
+
+  it("falls back to keyed numeric indexes when omitArrayIndex is true but keys do not start at 1", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "0",
+        keyFormat: "numeric",
+        properties: { count: 0 },
+      },
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: { count: 1 },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: { count: 2 },
+      },
+    ];
+
+    const output = generate(records, "testModule", sampleProperties, true, {
+      omitArrayIndex: true,
+    });
+
+    assert.match(output, /\[0\] = \{/);
+    assert.match(output, /\[1\] = \{/);
+    assert.match(output, /\[2\] = \{/);
+    assert.match(output, /export type TestModule = \{ \[number\]: TestModuleEntry \}/);
+    assert.doesNotMatch(output, /export type TestModule = \{ TestModuleEntry \}/);
+    assert.doesNotMatch(output, /\[1\]: TestModuleEntry,/);
+  });
+
+  it("uses [number] index signature for mixed numeric and non-numeric module types", () => {
+    const records: LuauRecord[] = [
+      {
+        key: "Alpha",
+        keyFormat: "identifier",
+        properties: { count: 1 },
+      },
+      {
+        key: "1",
+        keyFormat: "numeric",
+        properties: { count: 10 },
+      },
+      {
+        key: "2",
+        keyFormat: "numeric",
+        properties: { count: 20 },
+      },
+    ];
+
+    const output = generate(records);
+
+    assert.match(output, /Alpha: TestModuleEntry,/);
+    assert.match(output, /\[number\]: TestModuleEntry,/);
+    assert.doesNotMatch(output, /\[1\]: TestModuleEntry,/);
+    assert.doesNotMatch(output, /\[2\]: TestModuleEntry,/);
+    assert.match(output, /Alpha = \{/);
+    assert.match(output, /\[1\] = \{/);
+    assert.match(output, /\[2\] = \{/);
   });
 });

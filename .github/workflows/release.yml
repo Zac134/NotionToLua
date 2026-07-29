@@ -24,23 +24,29 @@ jobs:
 
   build:
     needs: test
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - bun_target: bun-linux-x64
             artifact_suffix: linux-x86_64
+            runner: ubuntu-latest
           - bun_target: bun-linux-arm64
             artifact_suffix: linux-aarch64
+            runner: ubuntu-latest
           - bun_target: bun-darwin-x64
             artifact_suffix: macos-x86_64
+            runner: macos-latest
           - bun_target: bun-darwin-arm64
             artifact_suffix: macos-aarch64
+            runner: macos-latest
           - bun_target: bun-windows-x64
             artifact_suffix: windows-x86_64
+            runner: ubuntu-latest
           - bun_target: bun-windows-arm64
             artifact_suffix: windows-aarch64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 

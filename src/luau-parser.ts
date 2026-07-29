@@ -1,5 +1,6 @@
 import { resolveLuauKeyFormat } from "./formatter.js";
 import { NotionToLuaError } from "./errors.js";
+import { tryParseRobloxValueFromSource } from "./typed-rich-text.js";
 import type { LuauRecord, LuauTable, LuauValue } from "./types.js";
 import { isLuauTable } from "./types.js";
 
@@ -7,6 +8,13 @@ export type ParsedModule = {
   moduleName: string;
   records: LuauRecord[];
 };
+
+function isRecordArray(value: LuauValue): value is LuauTable[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => isLuauTable(item))
+  );
+}
 
 type TokenType =
   | "identifier"
@@ -23,6 +31,10 @@ type TokenType =
   | "}"
   | "["
   | "]"
+  | "("
+  | ")"
+  | "."
+  | "*"
   | "="
   | ":"
   | ","
@@ -80,6 +92,26 @@ function lex(source: string): Token[] {
     }
     if (char === "]") {
       tokens.push({ type: "]", offset });
+      advance();
+      continue;
+    }
+    if (char === "(") {
+      tokens.push({ type: "(", offset });
+      advance();
+      continue;
+    }
+    if (char === ")") {
+      tokens.push({ type: ")", offset });
+      advance();
+      continue;
+    }
+    if (char === ".") {
+      tokens.push({ type: ".", offset });
+      advance();
+      continue;
+    }
+    if (char === "*") {
+      tokens.push({ type: "*", offset });
       advance();
       continue;
     }
@@ -195,11 +227,14 @@ function lex(source: string): Token[] {
 class Parser {
   private index = 0;
 
-  constructor(private readonly tokens: Token[]) {}
+  constructor(
+    private readonly tokens: Token[],
+    private readonly source: string,
+  ) {}
 
   parseModule(): ParsedModule {
     let moduleName: string | null = null;
-    let moduleTable: LuauTable | null = null;
+    let moduleValue: LuauTable | LuauTable[] | null = null;
     let returnName: string | null = null;
 
     while (!this.isAtEnd()) {
@@ -214,7 +249,7 @@ class Parser {
         }
         const assignment = this.parseLocalAssignment();
         moduleName = assignment.name;
-        moduleTable = assignment.table;
+        moduleValue = assignment.value;
         continue;
       }
 
@@ -231,7 +266,7 @@ class Parser {
       );
     }
 
-    if (moduleName === null || moduleTable === null) {
+    if (moduleName === null || moduleValue === null) {
       throw new NotionToLuaError("Expected a local module table assignment.");
     }
 
@@ -245,9 +280,13 @@ class Parser {
       );
     }
 
+    const records = Array.isArray(moduleValue)
+      ? this.moduleArrayToRecords(moduleValue)
+      : this.moduleTableToRecords(moduleValue);
+
     return {
       moduleName,
-      records: this.moduleTableToRecords(moduleTable),
+      records,
     };
   }
 
@@ -270,7 +309,7 @@ class Parser {
         depth += 1;
         continue;
       }
-      if (this.match("[") || this.match("]") || this.match("=") || this.match(":")) {
+      if (this.match("[") || this.match("]") || this.match("(") || this.match(")") || this.match(".") || this.match("*") || this.match("=") || this.match(":")) {
         continue;
       }
       if (
@@ -290,19 +329,24 @@ class Parser {
     }
   }
 
-  private parseLocalAssignment(): { name: string; table: LuauTable } {
+  private parseLocalAssignment(): { name: string; value: LuauTable | LuauTable[] } {
     const name = this.expect("identifier").value as string;
     if (this.match(":")) {
       this.expect("identifier");
     }
     this.expect("=");
     const value = this.parseTableValue();
-    if (!isLuauTable(value)) {
-      throw new NotionToLuaError(
-        `Expected a table literal for local "${name}" at offset ${this.previous().offset}.`,
-      );
+    if (isLuauTable(value)) {
+      return { name, value };
     }
-    return { name, table: value };
+
+    if (isRecordArray(value)) {
+      return { name, value };
+    }
+
+    throw new NotionToLuaError(
+      `Expected a table literal or array of record tables for local "${name}" at offset ${this.previous().offset}.`,
+    );
   }
 
   private parseReturnIdentifier(): string {
@@ -326,15 +370,74 @@ class Parser {
     });
   }
 
+  private moduleArrayToRecords(items: LuauTable[]): LuauRecord[] {
+    return items.map((properties, index) => {
+      const key = String(index + 1);
+      return {
+        key,
+        keyFormat: resolveLuauKeyFormat(key),
+        properties,
+      };
+    });
+  }
+
   private parseTableValue(): LuauValue {
     this.expect("{");
     if (this.match("}")) {
       return {};
     }
 
+    if (this.check("{")) {
+      const items: LuauValue[] = [];
+
+      while (true) {
+        this.expect("{");
+        this.index -= 1;
+        items.push(this.parseTableValue());
+
+        if (this.match("}")) {
+          break;
+        }
+
+        this.expect(",");
+        if (this.match("}")) {
+          break;
+        }
+      }
+
+      return items;
+    }
+
+    if (
+      this.check("number") ||
+      this.check("true") ||
+      this.check("false") ||
+      this.check("nil") ||
+      this.check("identifier")
+    ) {
+      const maybeIdentifier = this.check("identifier");
+      if (
+        maybeIdentifier &&
+        (this.tokens[this.index + 1]?.type === "=" ||
+          this.tokens[this.index + 1]?.type === ":")
+      ) {
+        // keyed dictionary
+      } else {
+        const items = [this.parseValue()];
+        while (!this.match("}")) {
+          this.expect(",");
+          if (this.match("}")) {
+            break;
+          }
+          items.push(this.parseValue());
+        }
+        return items;
+      }
+    }
+
     const firstEntry = this.parseTableEntry(false);
     if (firstEntry.kind === "array") {
-      const items = [firstEntry.value as string];
+      const items = [firstEntry.value];
       while (!this.match("}")) {
         this.expect(",");
         if (this.match("}")) {
@@ -346,7 +449,7 @@ class Parser {
             `Mixed keyed and unkeyed table entries at offset ${this.current().offset}.`,
           );
         }
-        items.push(entry.value as string);
+        items.push(entry.value);
       }
       return items;
     }
@@ -382,7 +485,7 @@ class Parser {
   private parseTableEntry(
     arrayMode: boolean,
   ):
-    | { kind: "array"; value: string }
+    | { kind: "array"; value: LuauValue }
     | { kind: "keyed"; key: string; value: LuauValue } {
     if (arrayMode) {
       if (this.check("identifier") && this.tokens[this.index + 1]?.type === "=") {
@@ -390,7 +493,12 @@ class Parser {
           `Mixed keyed and unkeyed table entries at offset ${this.current().offset}.`,
         );
       }
-      return { kind: "array", value: this.parseStringLiteral() };
+      if (this.match("string")) {
+        return { kind: "array", value: this.previous().value as string };
+      }
+
+      this.index -= 1;
+      return { kind: "array", value: this.parseValue() };
     }
 
     if (this.match("string")) {
@@ -398,8 +506,16 @@ class Parser {
     }
 
     if (this.match("[")) {
-      this.expect("string");
-      const key = this.previous().value as string;
+      let key: string;
+      if (this.match("string")) {
+        key = this.previous().value as string;
+      } else if (this.match("number")) {
+        key = String(this.previous().value as number);
+      } else {
+        throw new NotionToLuaError(
+          `Expected string or number inside brackets at offset ${this.current().offset}.`,
+        );
+      }
       this.expect("]");
       this.expect("=");
       const value = this.parseValue();
@@ -437,10 +553,32 @@ class Parser {
       this.index -= 1;
       return this.parseTableValue();
     }
+    if (this.match("identifier")) {
+      const token = this.previous();
+      const parsed = tryParseRobloxValueFromSource(this.source, token.offset);
+      if (parsed) {
+        this.advanceToOffset(parsed.endOffset);
+        return parsed.value;
+      }
+
+      throw new NotionToLuaError(
+        `Expected value at offset ${this.current().offset}.`,
+      );
+    }
 
     throw new NotionToLuaError(
       `Expected value at offset ${this.current().offset}.`,
     );
+  }
+
+  private advanceToOffset(endOffset: number): void {
+    while (this.index < this.tokens.length) {
+      const token = this.current();
+      if (token.type === "eof" || token.offset >= endOffset) {
+        return;
+      }
+      this.index += 1;
+    }
   }
 
   private parseStringLiteral(): string {
@@ -483,5 +621,5 @@ class Parser {
 
 export function parseLuauModule(source: string): ParsedModule {
   const tokens = lex(source);
-  return new Parser(tokens).parseModule();
+  return new Parser(tokens, source).parseModule();
 }

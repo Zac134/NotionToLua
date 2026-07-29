@@ -61,18 +61,20 @@ Options:
   -h, --help          Show help
 
 Configuration (ntn-lua.toml):
-  database_id         Default database_id or data_source_id
-  page_id             Default Notion page ID for code block / push parent page
-  output              Default output directory or .lua / .luau file path
+  database_id                 Default database_id or data_source_id
+  code_block_parent_page_id   Default Notion page ID for code block / push parent page
+                              (legacy flat page_id also accepted)
+  output                      Default output directory or .lua / .luau file path
   format              Run Stylua formatting (default: true)
   export_types        Emit Luau export types (default: true)
   empty_value         How to emit null values: omit, nil, or empty_string (default: omit)
   empty_relation      How to emit empty relations: omit or empty_table (default: omit)
+  omit_array_index    Omit numeric array indexes when keys are 1..N (default: false)
 
 Priority:
   database_id   -d / --database-id → positional argument → ntn-lua.toml database_id
   output        -o / --output → ntn-lua.toml output
-  page_id       -p / --page-id → ntn-lua.toml page_id
+  code_block_parent_page_id   -p / --page-id → ntn-lua.toml code_block_parent_page_id
 
 Environment:
   NOTION_API_TOKEN    Required. Notion integration internal secret`);
@@ -111,7 +113,7 @@ async function runPush(config: ReturnType<typeof loadUserConfig>): Promise<numbe
 
   if (!pageId) {
     writeWarning(
-      "No page ID was provided. Use -p or set page_id in ntn-lua.toml.",
+      "No page ID was provided. Use -p or set code_block_parent_page_id in ntn-lua.toml.",
     );
     printHelp();
     return 1;
@@ -193,6 +195,11 @@ async function run(): Promise<number> {
       dataSource,
       exportTypes: config.exportTypes,
       config,
+      onTypedFallback: (warning) => {
+        writeWarning(
+          `Record "${warning.recordKey}" property "${warning.propertyName}" [${warning.robloxType}] could not be parsed; kept as string "${warning.rawValue}".`,
+        );
+      },
     });
 
     const formatted = await formatLuauCode(luauCode, { skip: !config.format });

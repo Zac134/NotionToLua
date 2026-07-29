@@ -32,11 +32,12 @@ describe("loadUserConfig", () => {
         exportTypes: true,
         emptyValue: "omit",
         emptyRelation: "omit",
+        omitArrayIndex: false,
       });
     });
   });
 
-  it("reads all supported keys from ntn-lua.toml", () => {
+  it("reads all supported keys from flat ntn-lua.toml (legacy page_id)", () => {
     withTempConfig(
       `database_id = "db-123"
 page_id = "page-456"
@@ -45,6 +46,7 @@ format = false
 export_types = false
 empty_value = "nil"
 empty_relation = "empty_table"
+omit_array_index = true
 `,
       (cwd) => {
         assert.deepEqual(loadUserConfig(cwd), {
@@ -55,7 +57,138 @@ empty_relation = "empty_table"
           exportTypes: false,
           emptyValue: "nil",
           emptyRelation: "empty_table",
+          omitArrayIndex: true,
         });
+      },
+    );
+  });
+
+  it("reads all supported keys from sectioned ntn-lua.toml", () => {
+    withTempConfig(
+      `[source]
+database_id = "db-123"
+code_block_parent_page_id = "page-456"
+
+[paths]
+output = "./out"
+
+[emit]
+format = false
+export_types = false
+empty_value = "nil"
+empty_relation = "empty_table"
+omit_array_index = true
+`,
+      (cwd) => {
+        assert.deepEqual(loadUserConfig(cwd), {
+          databaseId: "db-123",
+          pageId: "page-456",
+          output: "./out",
+          format: false,
+          exportTypes: false,
+          emptyValue: "nil",
+          emptyRelation: "empty_table",
+          omitArrayIndex: true,
+        });
+      },
+    );
+  });
+
+  it("reads code_block_parent_page_id from flat ntn-lua.toml", () => {
+    withTempConfig(
+      `database_id = "db-123"
+code_block_parent_page_id = "page-789"
+`,
+      (cwd) => {
+        const config = loadUserConfig(cwd);
+        assert.equal(config.databaseId, "db-123");
+        assert.equal(config.pageId, "page-789");
+      },
+    );
+  });
+
+  it("throws when both page_id and code_block_parent_page_id are set", () => {
+    withTempConfig(
+      `page_id = "page-legacy"
+code_block_parent_page_id = "page-new"
+`,
+      (cwd) => {
+        assert.throws(
+          () => loadUserConfig(cwd),
+          (error: unknown) => {
+            assert.ok(error instanceof NotionToLuaError);
+            assert.match(
+              (error as NotionToLuaError).message,
+              /Cannot specify both "page_id" and "code_block_parent_page_id"/,
+            );
+            return true;
+          },
+        );
+      },
+    );
+  });
+
+  it("throws when section tables and flat keys are mixed", () => {
+    withTempConfig(
+      `database_id = "db-123"
+
+[emit]
+format = false
+`,
+      (cwd) => {
+        assert.throws(
+          () => loadUserConfig(cwd),
+          (error: unknown) => {
+            assert.ok(error instanceof NotionToLuaError);
+            assert.match(
+              (error as NotionToLuaError).message,
+              /Cannot mix section tables and flat keys/,
+            );
+            return true;
+          },
+        );
+      },
+    );
+  });
+
+  it("throws for unknown section names", () => {
+    withTempConfig(
+      `[unknown]
+key = "value"
+`,
+      (cwd) => {
+        assert.throws(
+          () => loadUserConfig(cwd),
+          (error: unknown) => {
+            assert.ok(error instanceof NotionToLuaError);
+            assert.match(
+              (error as NotionToLuaError).message,
+              /Unknown key "unknown"/,
+            );
+            return true;
+          },
+        );
+      },
+    );
+  });
+
+  it("throws for unknown keys inside a section", () => {
+    withTempConfig(
+      `[source]
+unknown_key = "value"
+`,
+      (cwd) => {
+        assert.throws(
+          () => loadUserConfig(cwd),
+          (error: unknown) => {
+            assert.ok(error instanceof NotionToLuaError);
+            assert.match(
+              (error as NotionToLuaError).message,
+              /Unknown key "unknown_key" in section "\[source\]"/,
+            );
+            return true;
+          },
+        );
       },
     );
   });
@@ -116,6 +249,22 @@ relation = "embed"
   it("accepts empty_string empty_value", () => {
     withTempConfig('empty_value = "empty_string"\n', (cwd) => {
       assert.equal(loadUserConfig(cwd).emptyValue, "empty_string");
+    });
+  });
+
+  it("throws when omit_array_index has an invalid type", () => {
+    withTempConfig('omit_array_index = "yes"\n', (cwd) => {
+      assert.throws(
+        () => loadUserConfig(cwd),
+        (error: unknown) => {
+          assert.ok(error instanceof NotionToLuaError);
+          assert.match(
+            (error as NotionToLuaError).message,
+            /Invalid type for "omit_array_index"/,
+          );
+          return true;
+        },
+      );
     });
   });
 

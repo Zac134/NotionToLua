@@ -4,6 +4,11 @@ import {
   indentBlock,
   resolveLuauKeyFormat,
 } from "./formatter.js";
+import {
+  canOmitRecordIndexes,
+  isNumericRecordKey,
+  parseNumericRelationTitle,
+} from "./record-index.js";
 import { toPascalCase } from "./module-name.js";
 import type {
   EmptyValueMode,
@@ -20,6 +25,33 @@ import {
 
 function sortKeys(keys: string[]): string[] {
   return [...keys].sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function sortRecords(records: LuauRecord[]): LuauRecord[] {
+  const allNumeric = records.every((record) => isNumericRecordKey(record.key));
+
+  if (allNumeric) {
+    return [...records].sort(
+      (left, right) =>
+        parseNumericRelationTitle(left.key) -
+        parseNumericRelationTitle(right.key),
+    );
+  }
+
+  return [...records].sort((left, right) =>
+    left.key.localeCompare(right.key, "en"),
+  );
+}
+
+function shouldOmitArrayIndexes(
+  records: LuauRecord[],
+  omitArrayIndex: boolean,
+): boolean {
+  if (!omitArrayIndex || records.length === 0) {
+    return false;
+  }
+
+  return canOmitRecordIndexes(records.map((record) => record.key));
 }
 
 function notionTypeToLuauType(notionType: string): string {
@@ -48,6 +80,31 @@ function relationPropertyToLuauType(
     return `{ [string]: ${property.relationMeta.valueType} }`;
   }
 
+  if (property.relationMeta.kind === "scalar_array") {
+    return `{ ${property.relationMeta.valueType} }`;
+  }
+
+  if (property.relationMeta.kind === "nested_array") {
+    const fieldLines = sortKeys(
+      property.relationMeta.entryProperties.map(
+        (entryProperty) => entryProperty.name,
+      ),
+    )
+      .map((propertyName) => {
+        const entryProperty = property.relationMeta?.kind === "nested_array"
+          ? property.relationMeta.entryProperties.find(
+              (item) => item.name === propertyName,
+            )
+          : undefined;
+        const luauType = notionTypeToLuauType(entryProperty?.notionType ?? "string");
+        const keyFormat = resolveLuauKeyFormat(propertyName);
+        return `${formatLuauKey(propertyName, keyFormat)}: ${luauType}?,`;
+      })
+      .join("\n");
+
+    return `{ {\n${indentBlock(fieldLines)}\n} }`;
+  }
+
   const fieldLines = sortKeys(
     property.relationMeta.entryProperties.map((entryProperty) => entryProperty.name),
   )
@@ -66,7 +123,21 @@ function relationPropertyToLuauType(
   return `{ [string]: {\n${indentBlock(fieldLines)}\n} }`;
 }
 
-function exportablePropertyToLuauType(property: ExportableProperty): string {
+function exportablePropertyToLuauType(
+  property: ExportableProperty,
+  records: LuauRecord[],
+): string {
+  if (property.robloxType) {
+    const hasStringFallback = records.some((record) => {
+      const value = record.properties[property.name];
+      return value !== null && typeof value === "string";
+    });
+
+    return hasStringFallback
+      ? `${property.robloxType} | string`
+      : property.robloxType;
+  }
+
   if (property.notionType === "relation") {
     return relationPropertyToLuauType(property) ?? "{ [string]: any }";
   }
@@ -152,6 +223,10 @@ function isPropertyPresentInRecord(
 
   const value = record.properties[propertyName];
 
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
   if (isLuauTable(value)) {
     return Object.keys(value).length > 0;
   }
@@ -183,6 +258,7 @@ function generateEntryType(
 
       const luauType = exportablePropertyToLuauType(
         property ?? { name: propertyName, notionType: "string" },
+        records,
       );
       const optionalSuffix = presentCount < records.length ? "?" : "";
 
@@ -201,19 +277,45 @@ function generateModuleType(
   moduleTypeName: string,
   entryTypeName: string,
   records: LuauRecord[],
+  omitArrayIndex = false,
 ): string | null {
   if (records.length === 0) {
     return `export type ${moduleTypeName} = {\n}`;
   }
 
-  const sortedRecords = [...records].sort((left, right) =>
-    left.key.localeCompare(right.key, "en"),
+  if (shouldOmitArrayIndexes(records, omitArrayIndex)) {
+    return `export type ${moduleTypeName} = { ${entryTypeName} }`;
+  }
+
+  const sortedRecords = sortRecords(records);
+  const hasNumeric = sortedRecords.some(
+    (record) => record.keyFormat === "numeric",
   );
 
-  const lines = sortedRecords.map((record) => {
-    const formattedKey = formatLuauKey(record.key, record.keyFormat);
-    return `${formattedKey}: ${entryTypeName},`;
-  });
+  if (!hasNumeric) {
+    const lines = sortedRecords.map((record) => {
+      const formattedKey = formatLuauKey(record.key, record.keyFormat);
+      return `${formattedKey}: ${entryTypeName},`;
+    });
+
+    return `export type ${moduleTypeName} = {\n${indentBlock(lines.join("\n"))}\n}`;
+  }
+
+  const allNumeric = sortedRecords.every(
+    (record) => record.keyFormat === "numeric",
+  );
+  if (allNumeric) {
+    return `export type ${moduleTypeName} = { [number]: ${entryTypeName} }`;
+  }
+
+  const lines: string[] = [];
+  for (const record of sortedRecords) {
+    if (record.keyFormat !== "numeric") {
+      const formattedKey = formatLuauKey(record.key, record.keyFormat);
+      lines.push(`${formattedKey}: ${entryTypeName},`);
+    }
+  }
+  lines.push(`[number]: ${entryTypeName},`);
 
   return `export type ${moduleTypeName} = {\n${indentBlock(lines.join("\n"))}\n}`;
 }
@@ -223,6 +325,7 @@ function generateTypeDefinitions(
   properties: ExportableProperty[],
   records: LuauRecord[],
   emptyValue: EmptyValueMode,
+  omitArrayIndex = false,
 ): string | null {
   const entryTypeName = `${toPascalCase(moduleName)}Entry`;
   const moduleTypeName = toPascalCase(moduleName);
@@ -237,7 +340,12 @@ function generateTypeDefinitions(
     return null;
   }
 
-  const moduleType = generateModuleType(moduleTypeName, entryTypeName, records);
+  const moduleType = generateModuleType(
+    moduleTypeName,
+    entryTypeName,
+    records,
+    omitArrayIndex,
+  );
   if (!moduleType) {
     return entryType;
   }
@@ -249,13 +357,21 @@ function formatModuleTableBody(
   records: LuauRecord[],
   properties: ExportableProperty[],
   emptyValue: EmptyValueMode,
+  omitArrayIndex = false,
 ): string {
-  const sortedRecords = [...records].sort((left, right) =>
-    left.key.localeCompare(right.key, "en"),
-  );
+  const sortedRecords = sortRecords(records);
 
   if (sortedRecords.length === 0) {
     return "{}";
+  }
+
+  if (shouldOmitArrayIndexes(sortedRecords, omitArrayIndex)) {
+    const lines = sortedRecords.map((record) => {
+      const body = formatRecordBody(record, properties, emptyValue);
+      return `${body},`;
+    });
+
+    return `{\n${indentBlock(lines.join("\n"))}\n}`;
   }
 
   const lines = sortedRecords.map((record) => {
@@ -274,21 +390,34 @@ export function generateModuleScript(
 ): string {
   const { moduleName, properties, exportTypes, outputOptions } = options;
   const emptyValue = outputOptions?.emptyValue ?? "omit";
+  const omitArrayIndex = outputOptions?.omitArrayIndex ?? false;
   const moduleTypeName = toPascalCase(moduleName);
   const typeDefinitions = exportTypes
-    ? generateTypeDefinitions(moduleName, properties, records, emptyValue)
+    ? generateTypeDefinitions(
+        moduleName,
+        properties,
+        records,
+        emptyValue,
+        omitArrayIndex,
+      )
     : null;
-  const tableBody = formatModuleTableBody(records, properties, emptyValue);
+  const tableBody = formatModuleTableBody(
+    records,
+    properties,
+    emptyValue,
+    omitArrayIndex,
+  );
   const typeAnnotation =
     exportTypes && typeDefinitions ? `: ${moduleTypeName}` : "";
-  const sections = [
-    typeDefinitions,
-    `local ${moduleName}${typeAnnotation} = ${tableBody}`,
-    "",
-    `return ${moduleName}`,
-  ].filter((section) => section !== null && section.length > 0);
+  const parts: string[] = [];
 
-  return `${sections.join("\n")}\n`;
+  if (typeDefinitions) {
+    parts.push(typeDefinitions, "");
+  }
+
+  parts.push(`local ${moduleName}${typeAnnotation} = ${tableBody}`, "", `return ${moduleName}`);
+
+  return `${parts.join("\n")}\n`;
 }
 
 export interface ModuleGenerator {
